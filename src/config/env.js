@@ -33,6 +33,18 @@ export const env = {
     .filter(Boolean),
 
   bcryptRounds: Number(process.env.BCRYPT_ROUNDS ?? 12),
+
+  uploads: {
+    dir: process.env.UPLOAD_DIR ?? "uploads",
+    maxMb: Number(process.env.MAX_UPLOAD_MB ?? 8),
+  },
+
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID,
+    keySecret: process.env.RAZORPAY_KEY_SECRET,
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+    apiBase: process.env.RAZORPAY_API_BASE ?? "https://api.razorpay.com/v1",
+  },
 };
 
 export const isProduction = env.nodeEnv === "production";

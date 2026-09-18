@@ -18,3 +18,22 @@ export const validate = (schema) => (req, _res, next) => {
   req.validated = result.data;
   return next();
 };
+
+/**
+ * Same as `validate`, but parses req.query instead of req.body — for GET
+ * endpoints with filter params (e.g. ?type=&status=).
+ */
+export const validateQuery = (schema) => (req, _res, next) => {
+  const result = schema.safeParse(req.query);
+
+  if (!result.success) {
+    const errors = result.error.issues.map((issue) => ({
+      field: issue.path.join(".") || "query",
+      message: issue.message,
+    }));
+    return next(ApiError.badRequest("Validation failed.", errors));
+  }
+
+  req.validatedQuery = result.data;
+  return next();
+};

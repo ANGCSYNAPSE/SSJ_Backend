@@ -28,3 +28,6 @@ export const requireRole =
     }
     return next();
   };
+
+/** Spread onto a route (`...requireAdmin`) to require an authenticated admin. */
+export const requireAdmin = [requireAuth, requireRole("admin")];

@@ -18,6 +18,7 @@ function toUser(row) {
     mobile: row.mobile,
     role: row.role,
     isVerified: row.is_verified,
+    isBlocked: row.is_blocked,
     createdAt: row.created_at,
   };
 }
@@ -25,7 +26,7 @@ function toUser(row) {
 export const UserModel = {
   async findById(id) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at
       FROM users
       WHERE id = ${id} AND deleted_at IS NULL
     `;
@@ -34,7 +35,7 @@ export const UserModel = {
 
   async findByEmail(email) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at
       FROM users
       WHERE email = ${email} AND deleted_at IS NULL
     `;
@@ -44,7 +45,7 @@ export const UserModel = {
   /** Includes the hash — only for the login path, never returned to a client. */
   async findByEmailWithPassword(email) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, created_at,
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at,
              password_hash
       FROM users
       WHERE email = ${email} AND deleted_at IS NULL
@@ -55,7 +56,7 @@ export const UserModel = {
 
   async findByMobile(mobile) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at
       FROM users
       WHERE mobile = ${mobile} AND deleted_at IS NULL
     `;
@@ -66,12 +67,41 @@ export const UserModel = {
     const [row] = await sql`
       INSERT INTO users (full_name, email, mobile, password_hash, role)
       VALUES (${fullName}, ${email}, ${mobile}, ${passwordHash}, ${role})
-      RETURNING id, full_name, email, mobile, role, is_verified, created_at
+      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, created_at
     `;
     return toUser(row);
   },
 
   async touchLastLogin(id) {
     await sql`UPDATE users SET last_login_at = NOW() WHERE id = ${id}`;
+  },
+
+  /** Admin user-management list — every non-deleted account. */
+  async list() {
+    const rows = await sql`
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+      FROM users
+      WHERE deleted_at IS NULL
+      ORDER BY created_at DESC
+    `;
+    return rows.map(toUser);
+  },
+
+  async setBlocked(id, isBlocked) {
+    const [row] = await sql`
+      UPDATE users SET is_blocked = ${isBlocked}
+      WHERE id = ${id} AND deleted_at IS NULL
+      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+    `;
+    return toUser(row);
+  },
+
+  async setRole(id, role) {
+    const [row] = await sql`
+      UPDATE users SET role = ${role}
+      WHERE id = ${id} AND deleted_at IS NULL
+      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+    `;
+    return toUser(row);
   },
 };
