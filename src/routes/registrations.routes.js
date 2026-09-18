@@ -12,6 +12,129 @@ import {
 } from "../validators/registrations.validator.js";
 
 /**
+ * @openapi
+ * /api/v1/registrations/public:
+ *   get:
+ *     tags: [Registrations]
+ *     summary: List approved registrations of a given type (public)
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         required: true
+ *         schema: { type: string, enum: [artist, dancer, musician, temple, dharamshala, mandal] }
+ *     responses:
+ *       200: { description: List of approved registrations }
+ *       400: { description: type is required }
+ * /api/v1/registrations:
+ *   post:
+ *     tags: [Registrations]
+ *     summary: Submit a registration (public)
+ *     description: Covers all 6 registration forms. New submissions start as `pending`.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [type, fullName, email, phone]
+ *             properties:
+ *               type: { type: string, enum: [artist, dancer, musician, temple, dharamshala, mandal] }
+ *               fullName: { type: string }
+ *               email: { type: string, format: email }
+ *               phone: { type: string }
+ *               details: { type: object, description: Type-specific fields }
+ *               attachments: { type: array, items: { type: string } }
+ *     responses:
+ *       201: { description: Submitted, pending admin verification }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *   get:
+ *     tags: [Registrations]
+ *     summary: List/filter registrations (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema: { type: string, enum: [artist, dancer, musician, temple, dharamshala, mandal] }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [pending, approved, rejected, blocked] }
+ *     responses:
+ *       200: { description: List of registrations }
+ * /api/v1/registrations/{id}:
+ *   get:
+ *     tags: [Registrations]
+ *     summary: Get a registration by id (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Found }
+ *       404: { description: Not found }
+ *   patch:
+ *     tags: [Registrations]
+ *     summary: Edit a registration (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Updated }
+ *       404: { description: Not found }
+ *   delete:
+ *     tags: [Registrations]
+ *     summary: Delete a registration (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       204: { description: Deleted }
+ *       404: { description: Not found }
+ * /api/v1/registrations/{id}/verify:
+ *   patch:
+ *     tags: [Registrations]
+ *     summary: Approve a registration (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema: { type: object, properties: { adminNote: { type: string } } }
+ *     responses:
+ *       200: { description: Approved }
+ *       404: { description: Not found }
+ * /api/v1/registrations/{id}/reject:
+ *   patch:
+ *     tags: [Registrations]
+ *     summary: Reject a registration (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Rejected }
+ *       404: { description: Not found }
+ * /api/v1/registrations/{id}/block:
+ *   patch:
+ *     tags: [Registrations]
+ *     summary: Block a previously approved registration (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Blocked }
+ *       404: { description: Not found }
+ * /api/v1/registrations/{id}/unblock:
+ *   patch:
+ *     tags: [Registrations]
+ *     summary: Unblock a registration, restoring it to approved (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Unblocked }
+ *       404: { description: Not found }
+ */
+/**
  * Covers all 6 registration forms (artist, dancer, musician, temple,
  * dharamshala, mandal). Public: submit only. Everything else — list,
  * filter, view, edit, verify, reject, block, delete — is admin-only.

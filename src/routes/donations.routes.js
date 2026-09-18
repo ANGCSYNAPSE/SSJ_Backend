@@ -11,6 +11,95 @@ import { createDonationOrderSchema, verifyDonationSchema } from "../validators/d
 import { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature } from "../services/razorpay.service.js";
 
 /**
+ * @openapi
+ * /api/v1/donations/create-order:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Create a Razorpay order for a donation
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [amount, cause, donorName]
+ *             properties:
+ *               amount: { type: number, description: Amount in rupees }
+ *               cause: { type: string }
+ *               donorName: { type: string }
+ *               email: { type: string, format: email }
+ *               phone: { type: string }
+ *               anonymous: { type: boolean, default: false }
+ *               wantReceipt: { type: boolean, default: true }
+ *     responses:
+ *       201:
+ *         description: Order created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 orderId: { type: string }
+ *                 amount: { type: integer }
+ *                 currency: { type: string }
+ *                 keyId: { type: string }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ * /api/v1/donations/verify:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Verify a Razorpay payment signature
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+ *             properties:
+ *               razorpay_order_id: { type: string }
+ *               razorpay_payment_id: { type: string }
+ *               razorpay_signature: { type: string }
+ *     responses:
+ *       200: { description: Verified }
+ *       400: { description: Signature mismatch or validation failed }
+ * /api/v1/donations/feed:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Public live feed of recent paid donations (latest 20)
+ *     responses:
+ *       200: { description: Donation feed }
+ * /api/v1/donations:
+ *   get:
+ *     tags: [Donations]
+ *     summary: List donations (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [created, paid, failed] }
+ *     responses:
+ *       200: { description: List of donations }
+ * /api/v1/donations/{id}/receipt:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Get an 80G-style receipt for a paid donation (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Receipt }
+ *       404: { description: Not found, or not paid yet }
+ * /api/v1/donations/webhook:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Razorpay webhook (payment.captured / payment.failed)
+ *     description: Verified via the `x-razorpay-signature` header against the raw request body.
+ *     responses:
+ *       200: { description: Received }
+ *       400: { description: Invalid webhook signature }
+ */
+/**
  * Real money flow. Order creation and signature verification talk to
  * Razorpay; a Donation record is persisted at every step.
  * Mounted at /api/v1/donations.

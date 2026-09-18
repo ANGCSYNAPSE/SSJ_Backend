@@ -25,7 +25,7 @@ function rowToEntity(row) {
  * (fullName -> full_name); `jsonColumns` lists fields stored as JSONB that
  * need stringifying on write.
  */
-export function createSqlRepository(table, { jsonColumns = [] } = {}) {
+export function createSqlRepository(table, { jsonColumns = [], defaultOrderBy = "created_at DESC" } = {}) {
   const toDbValue = (key, value) => (jsonColumns.includes(key) ? JSON.stringify(value) : value);
   // Double-quoted so a field name that happens to collide with a SQL
   // reserved word (e.g. "desc") is still a safe, unambiguous identifier.
@@ -36,7 +36,7 @@ export function createSqlRepository(table, { jsonColumns = [] } = {}) {
     /** `where`/`params` are a raw SQL fragment (no leading WHERE) and its bound params. */
     async list(where = "", params = []) {
       const whereSql = where ? `WHERE ${where}` : "";
-      const rows = await sql(`SELECT * FROM ${quotedTable} ${whereSql} ORDER BY created_at DESC`, params);
+      const rows = await sql(`SELECT * FROM ${quotedTable} ${whereSql} ORDER BY ${defaultOrderBy}`, params);
       return rows.map(rowToEntity);
     },
 
@@ -80,6 +80,13 @@ export function createSqlRepository(table, { jsonColumns = [] } = {}) {
     async remove(id) {
       const rows = await sql(`DELETE FROM ${quotedTable} WHERE id = $1 RETURNING id`, [id]);
       return rows.length > 0;
+    },
+
+    /** Bulk-assigns `"order"` from a list of `{ id, order }` pairs, e.g. after a drag-and-drop reorder. */
+    async reorderMany(items) {
+      await Promise.all(
+        items.map(({ id, order }) => sql(`UPDATE ${quotedTable} SET "order" = $1 WHERE id = $2`, [order, id])),
+      );
     },
   };
 }

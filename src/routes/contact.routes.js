@@ -7,6 +7,56 @@ import { validate } from "../middleware/validate.js";
 import { ContactSubmissionModel } from "../models/contactSubmission.model.js";
 import { createContactSubmissionSchema } from "../validators/contact.validator.js";
 
+/**
+ * @openapi
+ * /api/v1/contact:
+ *   post:
+ *     tags: [Contact]
+ *     summary: Submit a contact form
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, email, message]
+ *             properties:
+ *               name: { type: string }
+ *               email: { type: string, format: email }
+ *               phone: { type: string }
+ *               subject: { type: string }
+ *               message: { type: string }
+ *     responses:
+ *       201: { description: Submitted }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *   get:
+ *     tags: [Contact]
+ *     summary: List contact submissions (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: List of submissions }
+ * /api/v1/contact/{id}/handle:
+ *   patch:
+ *     tags: [Contact]
+ *     summary: Mark a submission handled (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Marked handled }
+ *       404: { description: Not found }
+ * /api/v1/contact/{id}:
+ *   delete:
+ *     tags: [Contact]
+ *     summary: Delete a submission (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       204: { description: Deleted }
+ *       404: { description: Not found }
+ */
 /** Mounted at /api/v1/contact. */
 export const contactRouter = Router();
 

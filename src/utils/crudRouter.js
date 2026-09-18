@@ -1,9 +1,16 @@
 import { Router } from "express";
+import { z } from "zod";
 import { ApiError } from "./ApiError.js";
 import { asyncHandler } from "./asyncHandler.js";
 import { sendSuccess } from "./apiResponse.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
+
+const reorderSchema = z.object({
+  items: z
+    .array(z.object({ id: z.string().min(1), order: z.number().int() }))
+    .min(1),
+});
 
 /**
  * Builds a standard REST router (list, detail, create, update, delete) plus
@@ -18,7 +25,14 @@ import { validate } from "../middleware/validate.js";
  * Admin routes (POST/PATCH/DELETE, and GET too when `publicRead` is unset)
  * always see/affect everything.
  */
-export function buildCrudRouter({ repository, createSchema, updateSchema, publicRead, statusActions = [] }) {
+export function buildCrudRouter({
+  repository,
+  createSchema,
+  updateSchema,
+  publicRead,
+  statusActions = [],
+  reorder = false,
+}) {
   const router = Router();
 
   const listHandler = asyncHandler(async (req, res) => {
@@ -55,6 +69,19 @@ export function buildCrudRouter({ repository, createSchema, updateSchema, public
       sendSuccess(res, { status: 201, message: "Created.", data: created });
     }),
   );
+
+  // Registered before "/:id" so "reorder" isn't swallowed as an :id value.
+  if (reorder) {
+    router.patch(
+      "/reorder",
+      ...requireAdmin,
+      validate(reorderSchema),
+      asyncHandler(async (req, res) => {
+        await repository.reorderMany(req.validated.items);
+        sendSuccess(res, { message: "Reordered." });
+      }),
+    );
+  }
 
   router.patch(
     "/:id",

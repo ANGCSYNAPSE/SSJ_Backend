@@ -19,7 +19,43 @@ async function getOrCreateSettings() {
   return SettingsModel.create(DEFAULTS);
 }
 
-/** Singleton site settings (contact info, social links). Mounted at /api/v1/settings. */
+/**
+ * @openapi
+ * /api/v1/settings:
+ *   get:
+ *     tags: [Settings]
+ *     summary: Get site settings
+ *     description: Auto-creates a default row on first read.
+ *     responses:
+ *       200: { description: Settings }
+ *   patch:
+ *     tags: [Settings]
+ *     summary: Update site settings (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               contactEmail: { type: string, format: email }
+ *               contactPhone: { type: string }
+ *               address: { type: string }
+ *               socialLinks:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     platform: { type: string }
+ *                     url: { type: string }
+ *     responses:
+ *       200: { description: Updated }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ */
+/**
+ * Singleton site settings (contact info, social links). Mounted at /api/v1/settings.
+ */
 export const settingsRouter = Router();
 
 settingsRouter.get(

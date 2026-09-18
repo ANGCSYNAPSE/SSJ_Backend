@@ -6,6 +6,43 @@ import { requireAdmin } from "../middleware/auth.js";
 import { publicUrlForUpload, upload } from "../middleware/upload.js";
 
 /**
+ * @openapi
+ * /api/v1/uploads:
+ *   post:
+ *     tags: [Uploads]
+ *     summary: Upload a file (admin)
+ *     description: >
+ *       Shared by every module that needs an image or document — registration
+ *       attachments, team member photos, ad creatives, blog cover images,
+ *       event images. Returns a `url` to store on the owning resource.
+ *       Allowed types: jpeg, png, webp, svg, gif, pdf.
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [file]
+ *             properties:
+ *               file: { type: string, format: binary }
+ *     responses:
+ *       201:
+ *         description: Uploaded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 url: { type: string }
+ *                 filename: { type: string }
+ *                 mimeType: { type: string }
+ *                 size: { type: integer }
+ *       400: { description: No file received, or unsupported type }
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ */
+/**
  * One shared upload endpoint used by every module that needs an image or
  * document — registration attachments, team member photos, ad creatives,
  * blog cover images, event images. Returns a `url` to store on the owning

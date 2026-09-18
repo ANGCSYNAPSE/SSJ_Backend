@@ -8,6 +8,85 @@ import { validate } from "../middleware/validate.js";
 import { EventModel, EventVolunteerModel } from "../models/event.model.js";
 import { createEventSchema, createEventVolunteerSchema, updateEventSchema } from "../validators/events.validator.js";
 
+/**
+ * @openapi
+ * /api/v1/events:
+ *   get:
+ *     tags: [Events]
+ *     summary: List events
+ *     description: Anonymous callers only see published events; admins see everything.
+ *     responses:
+ *       200: { description: List of events }
+ *   post:
+ *     tags: [Events]
+ *     summary: Create an event (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [title, description, location, startDate, type]
+ *             properties:
+ *               title: { type: string }
+ *               description: { type: string }
+ *               image: { type: string }
+ *               location: { type: string }
+ *               startDate: { type: string, format: date-time }
+ *               endDate: { type: string, format: date-time }
+ *               type: { type: string }
+ *               isPublished: { type: boolean, default: false }
+ *     responses:
+ *       201: { description: Created }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ * /api/v1/events/{id}:
+ *   get:
+ *     tags: [Events]
+ *     summary: Get an event by id
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Found }
+ *       404: { description: Not found }
+ *   patch:
+ *     tags: [Events]
+ *     summary: Update an event (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Updated }
+ *       404: { description: Not found }
+ *   delete:
+ *     tags: [Events]
+ *     summary: Delete an event (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       204: { description: Deleted }
+ *       404: { description: Not found }
+ * /api/v1/events/{id}/publish:
+ *   patch:
+ *     tags: [Events]
+ *     summary: Publish an event (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Published }
+ * /api/v1/events/{id}/unpublish:
+ *   patch:
+ *     tags: [Events]
+ *     summary: Unpublish an event (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Unpublished }
+ */
 /** Mounted at /api/v1/events. */
 export const eventsRouter = buildCrudRouter({
   repository: EventModel,
@@ -24,6 +103,51 @@ export const eventsRouter = buildCrudRouter({
   ],
 });
 
+/**
+ * @openapi
+ * /api/v1/events/{eventId}/volunteers:
+ *   post:
+ *     tags: [Events]
+ *     summary: Register/RSVP for an event
+ *     parameters:
+ *       - { in: path, name: eventId, required: true, schema: { type: string } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [fullName, email, phone]
+ *             properties:
+ *               fullName: { type: string }
+ *               email: { type: string, format: email }
+ *               phone: { type: string }
+ *               message: { type: string }
+ *     responses:
+ *       201: { description: Signed up }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *       404: { description: Event not found }
+ *   get:
+ *     tags: [Events]
+ *     summary: List registrants for an event (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: eventId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: List of volunteers }
+ * /api/v1/events/{eventId}/volunteers/{volunteerId}:
+ *   delete:
+ *     tags: [Events]
+ *     summary: Remove a registrant (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: eventId, required: true, schema: { type: string } }
+ *       - { in: path, name: volunteerId, required: true, schema: { type: string } }
+ *     responses:
+ *       204: { description: Removed }
+ *       404: { description: Not found }
+ */
 /**
  * Volunteer sign-ups for a specific event ("Register" button on the Events
  * page). Public: sign up. Admin: see who signed up for this event.
