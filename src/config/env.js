@@ -26,10 +26,14 @@ export const env = {
     refreshTtl: process.env.JWT_REFRESH_TTL ?? "7d",
   },
 
-  // Comma-separated list of allowed browser origins.
+  // Comma-separated list of allowed browser origins. Trailing slashes are
+  // stripped defensively — a browser's `Origin` header never has one, so a
+  // stored value like "https://x.vercel.app/" would otherwise never match
+  // and silently fail CORS (the same class of bug a trailing slash caused
+  // in the frontend's API_URL).
   corsOrigins: (process.env.CORS_ORIGINS ?? "http://localhost:3000")
     .split(",")
-    .map((origin) => origin.trim())
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
     .filter(Boolean),
 
   bcryptRounds: Number(process.env.BCRYPT_ROUNDS ?? 12),
