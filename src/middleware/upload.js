@@ -1,11 +1,6 @@
-import { randomUUID } from "crypto";
-import fs from "fs";
 import multer from "multer";
-import path from "path";
 import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
-
-const UPLOAD_ROOT = path.join(process.cwd(), env.uploads.dir);
 
 const ALLOWED_MIME = new Set([
   "image/jpeg",
@@ -16,20 +11,10 @@ const ALLOWED_MIME = new Set([
   "application/pdf",
 ]);
 
-function ensureUploadRoot() {
-  if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    ensureUploadRoot();
-    cb(null, UPLOAD_ROOT);
-  },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${randomUUID()}${ext}`);
-  },
-});
+// Buffered in memory rather than written to disk — the route handler streams
+// the buffer straight to Cloudinary, since local disk storage doesn't
+// survive between requests on serverless hosts like Vercel.
+const storage = multer.memoryStorage();
 
 export const upload = multer({
   storage,
@@ -41,10 +26,3 @@ export const upload = multer({
     return cb(null, true);
   },
 });
-
-/** URL the frontend can use to fetch an uploaded file, e.g. as Ad.imageUrl. */
-export function publicUrlForUpload(filename) {
-  return `/uploads/${filename}`;
-}
-
-export const uploadRoot = UPLOAD_ROOT;

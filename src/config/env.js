@@ -39,8 +39,13 @@ export const env = {
   bcryptRounds: Number(process.env.BCRYPT_ROUNDS ?? 12),
 
   uploads: {
-    dir: process.env.UPLOAD_DIR ?? "uploads",
     maxMb: Number(process.env.MAX_UPLOAD_MB ?? 8),
+  },
+
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
 
   razorpay: {

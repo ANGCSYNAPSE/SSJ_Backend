@@ -3,7 +3,8 @@ import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
 import { requireAdmin } from "../middleware/auth.js";
-import { publicUrlForUpload, upload } from "../middleware/upload.js";
+import { upload } from "../middleware/upload.js";
+import { uploadBufferToCloudinary } from "../services/cloudinary.service.js";
 
 /**
  * @openapi
@@ -35,7 +36,7 @@ import { publicUrlForUpload, upload } from "../middleware/upload.js";
  *               type: object
  *               properties:
  *                 url: { type: string }
- *                 filename: { type: string }
+ *                 publicId: { type: string }
  *                 mimeType: { type: string }
  *                 size: { type: integer }
  *       400: { description: No file received, or unsupported type }
@@ -57,12 +58,13 @@ uploadsRouter.post(
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) throw ApiError.badRequest("No file received (expected field name 'file')");
+    const result = await uploadBufferToCloudinary(req.file.buffer, { mimeType: req.file.mimetype });
     sendSuccess(res, {
       status: 201,
       message: "Uploaded.",
       data: {
-        url: publicUrlForUpload(req.file.filename),
-        filename: req.file.filename,
+        url: result.secure_url,
+        publicId: result.public_id,
         mimeType: req.file.mimetype,
         size: req.file.size,
       },

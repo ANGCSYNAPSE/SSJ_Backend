@@ -10,6 +10,9 @@ node_modules/
 /build
 /dist
 
+# Local upload scratch files — uploads now go straight to Cloudinary.
+/uploads
+
 # Misc
 .DS_Store
 *.pem
