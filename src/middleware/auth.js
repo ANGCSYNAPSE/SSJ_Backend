@@ -19,6 +19,29 @@ export function requireAuth(req, _res, next) {
   }
 }
 
+/**
+ * Attaches { id, role } to req.user when a valid Bearer token is present,
+ * but never rejects the request — used on routes that serve a public subset
+ * to anonymous callers and the full set to admins (see buildCrudRouter's
+ * `publicRead`). Without this, req.user is never set on those routes, so an
+ * admin's token is silently ignored and everyone gets the public view.
+ */
+export function attachUserIfPresent(req, _res, next) {
+  const header = req.headers.authorization ?? "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme === "Bearer" && token) {
+    try {
+      const payload = verifyAccessToken(token);
+      req.user = { id: payload.sub, role: payload.role };
+    } catch {
+      // Invalid/expired token on an optional-auth route: fall through as anonymous.
+    }
+  }
+
+  return next();
+}
+
 /** Gates a route to specific roles. Must run after requireAuth. */
 export const requireRole =
   (...roles) =>

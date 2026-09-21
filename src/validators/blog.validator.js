@@ -18,6 +18,8 @@ export const createBlogPostSchema = z.object({
   coverImage: z.string().optional(),
   categoryId: z.string().optional(),
   author: z.string().trim().min(1),
+  tags: z.array(z.string().trim().min(1)).default([]),
+  metaDescription: z.string().trim().optional(),
   isPublished: z.boolean().default(false),
   publishedAt: z.string().datetime().optional(),
 });
@@ -30,6 +32,8 @@ export const updateBlogPostSchema = z.object({
   coverImage: z.string().optional(),
   categoryId: z.string().optional(),
   author: z.string().trim().min(1).optional(),
+  tags: z.array(z.string().trim().min(1)).optional(),
+  metaDescription: z.string().trim().optional(),
   isPublished: z.boolean().optional(),
   publishedAt: z.string().datetime().optional(),
 });

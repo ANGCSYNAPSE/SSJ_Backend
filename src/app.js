@@ -17,7 +17,10 @@ const app = express();
 // Behind a proxy (Render/Vercel/Nginx) so rate limiting sees the real client IP.
 app.set("trust proxy", 1);
 
-app.use(helmet());
+// crossOriginResourcePolicy defaults to "same-origin", which blocks <img>
+// tags on other origins (the admin panel, the public site) from rendering
+// files served from /uploads. These are meant to be publicly embeddable.
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(
   cors({
     origin: env.corsOrigins,

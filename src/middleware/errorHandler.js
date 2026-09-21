@@ -18,11 +18,11 @@ export function errorHandler(err, _req, res, _next) {
   }
 
   // Unique violation that slipped past the pre-checks (e.g. a race between
-  // two concurrent signups for the same email).
+  // two concurrent signups for the same email, or a duplicate slug).
   if (err.code === "23505") {
     return sendError(res, {
       status: 409,
-      message: "This account already exists.",
+      message: "That value is already in use — please choose a different one.",
     });
   }
 

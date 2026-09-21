@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ApiError } from "./ApiError.js";
 import { asyncHandler } from "./asyncHandler.js";
 import { sendSuccess } from "./apiResponse.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { attachUserIfPresent, requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 
 const reorderSchema = z.object({
@@ -35,8 +35,13 @@ export function buildCrudRouter({
 }) {
   const router = Router();
 
+  // Only an authenticated admin sees the unfiltered set; anonymous callers
+  // and any other signed-in role (member, artist, temple_admin) get the
+  // same public subset.
+  const isAdminCaller = (req) => req.user?.role === "admin";
+
   const listHandler = asyncHandler(async (req, res) => {
-    const isPublic = Boolean(publicRead) && !req.user;
+    const isPublic = Boolean(publicRead) && !isAdminCaller(req);
     const { where, params } = isPublic ? publicRead() : {};
     const items = await repository.list(where, params);
     sendSuccess(res, { data: items });
@@ -45,7 +50,7 @@ export function buildCrudRouter({
   const detailHandler = asyncHandler(async (req, res) => {
     const item = await repository.findById(req.params.id);
     if (!item) throw ApiError.notFound();
-    const isPublic = Boolean(publicRead) && !req.user;
+    const isPublic = Boolean(publicRead) && !isAdminCaller(req);
     if (isPublic && publicRead().isVisible && !publicRead().isVisible(item)) {
       throw ApiError.notFound();
     }
@@ -53,8 +58,8 @@ export function buildCrudRouter({
   });
 
   if (publicRead) {
-    router.get("/", listHandler);
-    router.get("/:id", detailHandler);
+    router.get("/", attachUserIfPresent, listHandler);
+    router.get("/:id", attachUserIfPresent, detailHandler);
   } else {
     router.get("/", ...requireAdmin, listHandler);
     router.get("/:id", ...requireAdmin, detailHandler);
