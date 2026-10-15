@@ -19,6 +19,9 @@ function toUser(row) {
     role: row.role,
     isVerified: row.is_verified,
     isBlocked: row.is_blocked,
+    location: row.location ?? null,
+    avatarUrl: row.avatar_url ?? null,
+    lastLoginAt: row.last_login_at ?? null,
     createdAt: row.created_at,
   };
 }
@@ -26,7 +29,7 @@ function toUser(row) {
 export const UserModel = {
   async findById(id) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, created_at
       FROM users
       WHERE id = ${id} AND deleted_at IS NULL
     `;
@@ -35,7 +38,7 @@ export const UserModel = {
 
   async findByEmail(email) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, created_at
       FROM users
       WHERE email = ${email} AND deleted_at IS NULL
     `;
@@ -45,7 +48,7 @@ export const UserModel = {
   /** Includes the hash — only for the login path, never returned to a client. */
   async findByEmailWithPassword(email) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at,
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, created_at,
              password_hash
       FROM users
       WHERE email = ${email} AND deleted_at IS NULL
@@ -56,20 +59,69 @@ export const UserModel = {
 
   async findByMobile(mobile) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, created_at
       FROM users
       WHERE mobile = ${mobile} AND deleted_at IS NULL
     `;
     return toUser(row);
   },
 
-  async create({ fullName, email, mobile, passwordHash, role = "member" }) {
+  async create({
+    fullName,
+    email,
+    mobile,
+    passwordHash,
+    role = "member",
+    location = null,
+    avatarUrl = null,
+    isVerified = false,
+    isBlocked = false,
+  }) {
     const [row] = await sql`
-      INSERT INTO users (full_name, email, mobile, password_hash, role)
-      VALUES (${fullName}, ${email}, ${mobile}, ${passwordHash}, ${role})
-      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+      INSERT INTO users (full_name, email, mobile, password_hash, role, location, avatar_url, is_verified, is_blocked)
+      VALUES (${fullName}, ${email}, ${mobile}, ${passwordHash}, ${role}, ${location}, ${avatarUrl}, ${isVerified}, ${isBlocked})
+      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, created_at
     `;
     return toUser(row);
+  },
+
+  /** Admin profile edit. Only the keys present in `patch` are written. */
+  async update(id, patch) {
+    const columns = {
+      fullName: "full_name",
+      email: "email",
+      mobile: "mobile",
+      location: "location",
+      avatarUrl: "avatar_url",
+      role: "role",
+      isVerified: "is_verified",
+      isBlocked: "is_blocked",
+    };
+    const entries = Object.entries(patch).filter(([key, value]) => key in columns && value !== undefined);
+    if (entries.length === 0) return this.findById(id);
+
+    const setSql = entries.map(([key], i) => `${columns[key]} = $${i + 1}`).join(", ");
+    const values = entries.map(([, value]) => value);
+    const rows = await sql(
+      `UPDATE users SET ${setSql} WHERE id = $${values.length + 1} AND deleted_at IS NULL
+       RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, last_login_at, created_at`,
+      [...values, id],
+    );
+    return toUser(rows[0]);
+  },
+
+  /** Soft delete: the row stays for referential history but the account is gone everywhere. */
+  async softDelete(id) {
+    const rows = await sql`
+      UPDATE users SET deleted_at = NOW()
+      WHERE id = ${id} AND deleted_at IS NULL
+      RETURNING id
+    `;
+    return rows.length > 0;
+  },
+
+  async setPassword(id, passwordHash) {
+    await sql`UPDATE users SET password_hash = ${passwordHash} WHERE id = ${id}`;
   },
 
   async touchLastLogin(id) {
@@ -79,7 +131,7 @@ export const UserModel = {
   /** Admin user-management list — every non-deleted account. */
   async list() {
     const rows = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, last_login_at, created_at
       FROM users
       WHERE deleted_at IS NULL
       ORDER BY created_at DESC
@@ -91,7 +143,7 @@ export const UserModel = {
     const [row] = await sql`
       UPDATE users SET is_blocked = ${isBlocked}
       WHERE id = ${id} AND deleted_at IS NULL
-      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, created_at
     `;
     return toUser(row);
   },
@@ -100,7 +152,7 @@ export const UserModel = {
     const [row] = await sql`
       UPDATE users SET role = ${role}
       WHERE id = ${id} AND deleted_at IS NULL
-      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, created_at
+      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, location, avatar_url, created_at
     `;
     return toUser(row);
   },

@@ -77,3 +77,16 @@ export const me = asyncHandler(async (req, res) => {
 
   return sendSuccess(res, { message: "Current user.", data: { user } });
 });
+
+export const forgotPassword = asyncHandler(async (req, res) => {
+  await AuthService.requestPasswordReset(req.validated.email);
+  return sendSuccess(res, {
+    message: "If an account exists for that email, a reset link has been sent.",
+  });
+});
+
+export const resetPassword = asyncHandler(async (req, res) => {
+  const { token, password } = req.validated;
+  await AuthService.resetPassword({ token, password });
+  return sendSuccess(res, { message: "Password updated. You can now sign in." });
+});

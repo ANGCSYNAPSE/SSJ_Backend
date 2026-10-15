@@ -5,7 +5,10 @@ import { sendSuccess } from "../utils/apiResponse.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { UserModel } from "../models/user.model.js";
-import { changeRoleSchema } from "../validators/users.validator.js";
+import bcrypt from "bcryptjs";
+import { env } from "../config/env.js";
+import { AuthService } from "../services/auth.service.js";
+import { changeRoleSchema, createUserSchema, updateUserSchema } from "../validators/users.validator.js";
 
 /**
  * @openapi
@@ -79,6 +82,102 @@ adminUsersRouter.get(
   asyncHandler(async (_req, res) => {
     const users = await UserModel.list();
     sendSuccess(res, { data: users });
+  }),
+);
+
+adminUsersRouter.post(
+  "/",
+  ...requireAdmin,
+  validate(createUserSchema),
+  asyncHandler(async (req, res) => {
+    const { fullName, email, mobile, password, role, location, avatarUrl, status } = req.validated;
+
+    const [byEmail, byMobile] = await Promise.all([UserModel.findByEmail(email), UserModel.findByMobile(mobile)]);
+    const conflicts = [];
+    if (byEmail) conflicts.push({ field: "email", message: "An account with this email already exists." });
+    if (byMobile) conflicts.push({ field: "mobile", message: "An account with this mobile number already exists." });
+    if (conflicts.length > 0) throw ApiError.conflict("This account already exists.", conflicts);
+
+    const passwordHash = await bcrypt.hash(password, env.bcryptRounds);
+    const user = await UserModel.create({
+      fullName,
+      email,
+      mobile,
+      passwordHash,
+      role,
+      location,
+      avatarUrl,
+      isVerified: status !== "pending",
+      isBlocked: status === "suspended",
+    });
+    sendSuccess(res, { status: 201, message: "User created.", data: user });
+  }),
+);
+
+adminUsersRouter.get(
+  "/:id",
+  ...requireAdmin,
+  asyncHandler(async (req, res) => {
+    const user = await UserModel.findById(req.params.id);
+    if (!user) throw ApiError.notFound();
+    sendSuccess(res, { data: user });
+  }),
+);
+
+adminUsersRouter.patch(
+  "/:id",
+  ...requireAdmin,
+  validate(updateUserSchema),
+  asyncHandler(async (req, res) => {
+    const { status, ...fields } = req.validated;
+    const existing = await UserModel.findById(req.params.id);
+    if (!existing) throw ApiError.notFound();
+
+    const conflicts = [];
+    if (fields.email && fields.email !== existing.email && (await UserModel.findByEmail(fields.email))) {
+      conflicts.push({ field: "email", message: "An account with this email already exists." });
+    }
+    if (fields.mobile && fields.mobile !== existing.mobile && (await UserModel.findByMobile(fields.mobile))) {
+      conflicts.push({ field: "mobile", message: "An account with this mobile number already exists." });
+    }
+    if (conflicts.length > 0) throw ApiError.conflict("This account already exists.", conflicts);
+
+    const patch = { ...fields };
+    if (status) {
+      patch.isVerified = status !== "pending";
+      patch.isBlocked = status === "suspended";
+    }
+    // Admins can't lock themselves out or demote themselves by accident.
+    if (req.params.id === req.user.id && (patch.isBlocked || (patch.role && patch.role !== "admin"))) {
+      throw ApiError.badRequest("You can't suspend or demote your own account.");
+    }
+
+    const updated = await UserModel.update(req.params.id, patch);
+    sendSuccess(res, { message: "Updated.", data: updated });
+  }),
+);
+
+adminUsersRouter.delete(
+  "/:id",
+  ...requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (req.params.id === req.user.id) {
+      throw ApiError.badRequest("You can't delete your own account.");
+    }
+    const removed = await UserModel.softDelete(req.params.id);
+    if (!removed) throw ApiError.notFound();
+    res.status(204).send();
+  }),
+);
+
+adminUsersRouter.post(
+  "/:id/reset-password-link",
+  ...requireAdmin,
+  asyncHandler(async (req, res) => {
+    const user = await UserModel.findById(req.params.id);
+    if (!user) throw ApiError.notFound();
+    await AuthService.requestPasswordReset(user.email);
+    sendSuccess(res, { message: `Reset link sent to ${user.email}.` });
   }),
 );
 

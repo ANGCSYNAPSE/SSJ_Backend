@@ -48,6 +48,20 @@ export const env = {
     apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
 
+  // Where the admin panel lives; password reset emails link back to it.
+  adminUrl: (process.env.ADMIN_URL ?? "http://localhost:5173").replace(/\/+$/, ""),
+  passwordResetTtlMinutes: Number(process.env.PASSWORD_RESET_TTL_MINUTES ?? 30),
+
+  // Optional. Without SMTP_HOST, reset links are printed to the server log
+  // instead of emailed (fine for local development).
+  smtp: {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT ?? 587),
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.SMTP_FROM ?? "Shyam Jagat <no-reply@shyamjagat.com>",
+  },
+
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,

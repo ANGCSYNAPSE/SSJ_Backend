@@ -3,7 +3,12 @@ import * as authController from "../controllers/auth.controller.js";
 import { validate } from "../middleware/validate.js";
 import { requireAuth } from "../middleware/auth.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
-import { signupSchema, loginSchema } from "../validators/auth.validator.js";
+import {
+  signupSchema,
+  loginSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} from "../validators/auth.validator.js";
 
 const router = Router();
 
@@ -185,5 +190,47 @@ router.post("/logout", authController.logout);
  *         $ref: '#/components/responses/Unauthorized'
  */
 router.get("/me", requireAuth, authController.me);
+
+/**
+ * @openapi
+ * /api/v1/auth/forgot-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Email a password reset link
+ *     description: Always returns 200 so account existence is not revealed.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, format: email }
+ *     responses:
+ *       200: { description: Request accepted }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ * /api/v1/auth/reset-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Set a new password using an emailed reset token
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token, password, confirmPassword]
+ *             properties:
+ *               token: { type: string }
+ *               password: { type: string, minLength: 8 }
+ *               confirmPassword: { type: string }
+ *     responses:
+ *       200: { description: Password updated }
+ *       400: { description: Invalid/expired token or validation error }
+ */
+router.post("/forgot-password", authLimiter, validate(forgotPasswordSchema), authController.forgotPassword);
+router.post("/reset-password", authLimiter, validate(resetPasswordSchema), authController.resetPassword);
 
 export default router;

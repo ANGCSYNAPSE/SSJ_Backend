@@ -49,3 +49,16 @@ export const loginSchema = z.object({
   password: z.string({ required_error: "Password is required." }).min(1, "Please enter your password."),
   remember: z.boolean().optional().default(true),
 });
+
+export const forgotPasswordSchema = z.object({ email });
+
+export const resetPasswordSchema = z
+  .object({
+    token: z.string({ required_error: "Reset token is missing." }).min(1),
+    password,
+    confirmPassword: z.string({ required_error: "Please confirm your password." }),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Passwords do not match.",
+  });
