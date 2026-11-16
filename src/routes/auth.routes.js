@@ -2,12 +2,13 @@ import { Router } from "express";
 import * as authController from "../controllers/auth.controller.js";
 import { validate } from "../middleware/validate.js";
 import { requireAuth } from "../middleware/auth.js";
-import { authLimiter } from "../middleware/rateLimiter.js";
+import { authLimiter, availabilityLimiter } from "../middleware/rateLimiter.js";
 import {
   signupSchema,
   loginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  checkAvailabilitySchema,
 } from "../validators/auth.validator.js";
 
 const router = Router();
@@ -52,9 +53,20 @@ const router = Router();
  *               acceptTerms:
  *                 type: boolean
  *                 enum: [true]
+ *               becomeMember:
+ *                 type: boolean
+ *                 default: false
+ *                 description: Optional membership choice on the plain sign-up path.
+ *               category:
+ *                 type: string
+ *                 enum: [artist, dancer, musician, temple, dharamshala, mandal]
+ *                 description: Set to register as one of these instead of a plain member. The profile is stored in that category's own table.
+ *               profile:
+ *                 type: object
+ *                 description: The category's own fields (required when `category` is set). See the Registrations tag.
  *     responses:
  *       201:
- *         description: Account created
+ *         description: Account created (and category profile, if `category` was sent)
  *         content:
  *           application/json:
  *             schema:
@@ -145,6 +157,46 @@ router.post("/login", authLimiter, validate(loginSchema), authController.login);
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  */
+/**
+ * @openapi
+ * /api/v1/auth/check-availability:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Is this email or mobile already registered?
+ *     description: >
+ *       Used by the signup form before the person fills in a long registration.
+ *       `incomplete` is set when the email belongs to someone who started a
+ *       category registration (artist, temple, ...) and has not finished it.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               email: { type: string, format: email }
+ *               mobile: { type: string, example: "9876543210" }
+ *     responses:
+ *       200:
+ *         description: Availability
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 emailTaken: { type: boolean }
+ *                 mobileTaken: { type: boolean }
+ *                 incomplete:
+ *                   type: object
+ *                   nullable: true
+ *                   properties:
+ *                     category: { type: string }
+ *                     missing: { type: integer }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ */
+router.post("/check-availability", availabilityLimiter, validate(checkAvailabilitySchema), authController.checkAvailability);
+
 router.post("/refresh", authController.refresh);
 
 /**

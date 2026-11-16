@@ -2,7 +2,6 @@ import { Router } from "express";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
-import { requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { ContactSubmissionModel } from "../models/contactSubmission.model.js";
 import { createContactSubmissionSchema } from "../validators/contact.validator.js";
@@ -30,13 +29,14 @@ import { createContactSubmissionSchema } from "../validators/contact.validator.j
  *       201: { description: Submitted }
  *       400:
  *         $ref: '#/components/responses/ValidationError'
+ * /api/v1/admin/contact:
  *   get:
  *     tags: [Contact]
  *     summary: List contact submissions (admin)
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       200: { description: List of submissions }
- * /api/v1/contact/{id}/handle:
+ * /api/v1/admin/contact/{id}/handle:
  *   patch:
  *     tags: [Contact]
  *     summary: Mark a submission handled (admin)
@@ -46,7 +46,7 @@ import { createContactSubmissionSchema } from "../validators/contact.validator.j
  *     responses:
  *       200: { description: Marked handled }
  *       404: { description: Not found }
- * /api/v1/contact/{id}:
+ * /api/v1/admin/contact/{id}:
  *   delete:
  *     tags: [Contact]
  *     summary: Delete a submission (admin)
@@ -57,8 +57,11 @@ import { createContactSubmissionSchema } from "../validators/contact.validator.j
  *       204: { description: Deleted }
  *       404: { description: Not found }
  */
-/** Mounted at /api/v1/contact. */
+/** Public submit form. Mounted at /api/v1/contact. */
 export const contactRouter = Router();
+
+/** Reading and managing submissions. Mounted at /api/v1/admin/contact. */
+export const adminContactRouter = Router();
 
 contactRouter.post(
   "/",
@@ -69,18 +72,16 @@ contactRouter.post(
   }),
 );
 
-contactRouter.get(
+adminContactRouter.get(
   "/",
-  ...requireAdmin,
   asyncHandler(async (_req, res) => {
     const items = await ContactSubmissionModel.list();
     sendSuccess(res, { data: items });
   }),
 );
 
-contactRouter.patch(
+adminContactRouter.patch(
   "/:id/handle",
-  ...requireAdmin,
   asyncHandler(async (req, res) => {
     const updated = await ContactSubmissionModel.update(req.params.id, { isHandled: true });
     if (!updated) throw ApiError.notFound();
@@ -88,9 +89,8 @@ contactRouter.patch(
   }),
 );
 
-contactRouter.delete(
+adminContactRouter.delete(
   "/:id",
-  ...requireAdmin,
   asyncHandler(async (req, res) => {
     const removed = await ContactSubmissionModel.remove(req.params.id);
     if (!removed) throw ApiError.notFound();

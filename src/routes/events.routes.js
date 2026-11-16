@@ -3,7 +3,6 @@ import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
 import { buildCrudRouter } from "../utils/crudRouter.js";
-import { requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { EventModel, EventVolunteerModel } from "../models/event.model.js";
 import { createEventSchema, createEventVolunteerSchema, updateEventSchema } from "../validators/events.validator.js";
@@ -128,6 +127,7 @@ export const eventsRouter = buildCrudRouter({
  *       400:
  *         $ref: '#/components/responses/ValidationError'
  *       404: { description: Event not found }
+ * /api/v1/admin/events/{eventId}/volunteers:
  *   get:
  *     tags: [Events]
  *     summary: List registrants for an event (admin)
@@ -136,7 +136,7 @@ export const eventsRouter = buildCrudRouter({
  *       - { in: path, name: eventId, required: true, schema: { type: string } }
  *     responses:
  *       200: { description: List of volunteers }
- * /api/v1/events/{eventId}/volunteers/{volunteerId}:
+ * /api/v1/admin/events/{eventId}/volunteers/{volunteerId}:
  *   delete:
  *     tags: [Events]
  *     summary: Remove a registrant (admin)
@@ -155,6 +155,9 @@ export const eventsRouter = buildCrudRouter({
  */
 export const eventVolunteersRouter = Router({ mergeParams: true });
 
+/** Seeing and removing registrants. Mounted at /api/v1/admin/events/:eventId/volunteers. */
+export const adminEventVolunteersRouter = Router({ mergeParams: true });
+
 eventVolunteersRouter.post(
   "/",
   validate(createEventVolunteerSchema),
@@ -166,18 +169,16 @@ eventVolunteersRouter.post(
   }),
 );
 
-eventVolunteersRouter.get(
+adminEventVolunteersRouter.get(
   "/",
-  ...requireAdmin,
   asyncHandler(async (req, res) => {
     const volunteers = await EventVolunteerModel.list("event_id = $1", [req.params.eventId]);
     sendSuccess(res, { data: volunteers });
   }),
 );
 
-eventVolunteersRouter.delete(
+adminEventVolunteersRouter.delete(
   "/:volunteerId",
-  ...requireAdmin,
   asyncHandler(async (req, res) => {
     const removed = await EventVolunteerModel.remove(req.params.volunteerId);
     if (!removed) throw ApiError.notFound();

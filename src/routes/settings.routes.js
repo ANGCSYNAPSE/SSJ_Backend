@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
-import { requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { SettingsModel } from "../models/settings.model.js";
 import { updateSettingsSchema } from "../validators/settings.validator.js";
@@ -28,6 +27,7 @@ async function getOrCreateSettings() {
  *     description: Auto-creates a default row on first read.
  *     responses:
  *       200: { description: Settings }
+ * /api/v1/admin/settings:
  *   patch:
  *     tags: [Settings]
  *     summary: Update site settings (admin)
@@ -58,6 +58,9 @@ async function getOrCreateSettings() {
  */
 export const settingsRouter = Router();
 
+/** Editing the settings. Mounted at /api/v1/admin/settings. */
+export const adminSettingsRouter = Router();
+
 settingsRouter.get(
   "/",
   asyncHandler(async (_req, res) => {
@@ -65,9 +68,8 @@ settingsRouter.get(
   }),
 );
 
-settingsRouter.patch(
+adminSettingsRouter.patch(
   "/",
-  ...requireAdmin,
   validate(updateSettingsSchema),
   asyncHandler(async (req, res) => {
     const current = await getOrCreateSettings();

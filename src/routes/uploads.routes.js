@@ -2,7 +2,7 @@ import { Router } from "express";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import { upload } from "../middleware/upload.js";
 import { uploadBufferToCloudinary } from "../services/cloudinary.service.js";
 
@@ -11,12 +11,12 @@ import { uploadBufferToCloudinary } from "../services/cloudinary.service.js";
  * /api/v1/uploads:
  *   post:
  *     tags: [Uploads]
- *     summary: Upload a file (admin)
+ *     summary: Upload a file (any signed-in user)
  *     description: >
  *       Shared by every module that needs an image or document — registration
  *       attachments, team member photos, ad creatives, blog cover images,
  *       event images. Returns a `url` to store on the owning resource.
- *       Allowed types: jpeg, png, webp, svg, gif, pdf.
+ *       Allowed types: jpeg, png, webp, svg, gif, pdf, Word, mp4/webm video and mp3/wav/m4a audio.
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
@@ -54,7 +54,7 @@ export const uploadsRouter = Router();
 
 uploadsRouter.post(
   "/",
-  ...requireAdmin,
+  requireAuth,
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) throw ApiError.badRequest("No file received (expected field name 'file')");

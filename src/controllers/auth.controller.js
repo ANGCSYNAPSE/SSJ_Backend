@@ -24,6 +24,11 @@ export const signup = asyncHandler(async (req, res) => {
   });
 });
 
+export const checkAvailability = asyncHandler(async (req, res) => {
+  const result = await AuthService.checkAvailability(req.validated);
+  return sendSuccess(res, { message: "Checked.", data: result });
+});
+
 export const login = asyncHandler(async (req, res) => {
   const { remember, ...credentials } = req.validated;
   const { user, accessToken, refreshToken } = await AuthService.login(
@@ -75,7 +80,10 @@ export const me = asyncHandler(async (req, res) => {
     throw ApiError.notFound("Account not found.");
   }
 
-  return sendSuccess(res, { message: "Current user.", data: { user } });
+  return sendSuccess(res, {
+    message: "Current user.",
+    data: { user: await AuthService.withProfiles(user) },
+  });
 });
 
 export const forgotPassword = asyncHandler(async (req, res) => {

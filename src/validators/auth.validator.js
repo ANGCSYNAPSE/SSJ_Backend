@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CATEGORY_KEYS, PROFILE_SCHEMAS } from "./profiles.validator.js";
 
 const email = z
   .string({ required_error: "Email address is required." })
@@ -38,10 +39,31 @@ export const signupSchema = z
         message: "Please accept the Terms of Service to continue.",
       }),
     }),
+    // "Become a Member" checkbox on the plain sign-up path.
+    becomeMember: z.boolean().optional().default(false),
+    // Set when the person is registering as an artist, temple, etc. The
+    // category's own fields travel in `profile` and are validated below.
+    category: z.enum(CATEGORY_KEYS).optional(),
+    profile: z.record(z.unknown()).optional(),
   })
   .refine((data) => data.password === data.confirmPassword, {
     path: ["confirmPassword"],
     message: "Passwords do not match.",
+  })
+  .transform((data, ctx) => {
+    if (!data.category) {
+      const { profile: _ignored, ...rest } = data;
+      return rest;
+    }
+
+    const parsed = PROFILE_SCHEMAS[data.category].safeParse(data.profile ?? {});
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({ ...issue, path: ["profile", ...issue.path] });
+      }
+      return z.NEVER;
+    }
+    return { ...data, profile: parsed.data };
   });
 
 export const loginSchema = z.object({
@@ -51,6 +73,11 @@ export const loginSchema = z.object({
 });
 
 export const forgotPasswordSchema = z.object({ email });
+
+/** Signup asks this on its first step, before the person fills in the rest of a long form. */
+export const checkAvailabilitySchema = z
+  .object({ email: email.optional(), mobile: mobile.optional() })
+  .refine((v) => v.email || v.mobile, { message: "Send an email or a mobile number." });
 
 export const resetPasswordSchema = z
   .object({

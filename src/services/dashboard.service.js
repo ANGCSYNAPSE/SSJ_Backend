@@ -34,16 +34,16 @@ export async function getDashboardStats() {
     one(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE ${WEEK})::int AS new_this_week
-       FROM registrations WHERE type = 'temple' AND status = 'approved'`,
+       FROM all_registrations WHERE type = 'temple' AND status = 'approved'`,
     ),
     one(
       `SELECT COUNT(*)::int AS total,
-              (SELECT COUNT(*)::int FROM registrations WHERE type IN ('artist','dancer','musician') AND status = 'pending') AS pending_approval
-       FROM registrations WHERE type IN ('artist','dancer','musician') AND status = 'approved'`,
+              (SELECT COUNT(*)::int FROM all_registrations WHERE type IN ('artist','dancer','musician') AND status = 'pending') AS pending_approval
+       FROM all_registrations WHERE type IN ('artist','dancer','musician') AND status = 'approved'`,
     ),
     one(
       `SELECT COUNT(*)::int AS total
-       FROM registrations WHERE type = 'dharamshala' AND status = 'approved'`,
+       FROM all_registrations WHERE type = 'dharamshala' AND status = 'approved'`,
     ),
     one(
       `SELECT COALESCE(SUM(amount_in_rupees), 0)::numeric AS total,
@@ -63,7 +63,7 @@ export async function getDashboardStats() {
     ),
     one(`SELECT COUNT(*)::int AS total FROM blog_posts WHERE is_published = TRUE`),
     one(`SELECT COUNT(*)::int AS total FROM users WHERE deleted_at IS NULL`),
-    one(`SELECT COUNT(*)::int AS total FROM registrations WHERE status = 'pending'`),
+    one(`SELECT COUNT(*)::int AS total FROM all_registrations WHERE status = 'pending'`),
     one(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE ${MONTH})::int AS new_this_month
@@ -138,8 +138,8 @@ export async function getDonationTrends() {
 export async function getActivityFeed(limit = 10) {
   const rows = await sql(
     `SELECT * FROM (
-       (SELECT 'temple_listed' AS kind, full_name AS actor, created_at
-          FROM registrations WHERE type = 'temple' AND status = 'approved'
+       (SELECT 'temple_listed' AS kind, display_name AS actor, created_at
+          FROM all_registrations WHERE type = 'temple' AND status = 'approved'
           ORDER BY created_at DESC LIMIT 5)
        UNION ALL
        (SELECT 'donation_received' AS kind, CASE WHEN anonymous THEN 'Anonymous' ELSE donor_name END AS actor, created_at
@@ -150,8 +150,8 @@ export async function getActivityFeed(limit = 10) {
           FROM blog_posts
           ORDER BY created_at DESC LIMIT 5)
        UNION ALL
-       (SELECT 'artist_approval_requested' AS kind, full_name AS actor, created_at
-          FROM registrations WHERE type IN ('artist','dancer','musician') AND status = 'pending'
+       (SELECT 'artist_approval_requested' AS kind, display_name AS actor, created_at
+          FROM all_registrations WHERE type IN ('artist','dancer','musician') AND status = 'pending'
           ORDER BY created_at DESC LIMIT 5)
      ) feed
      ORDER BY created_at DESC

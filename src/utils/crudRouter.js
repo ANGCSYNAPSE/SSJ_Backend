@@ -24,6 +24,11 @@ const reorderSchema = z.object({
  *     detail route so an unpublished item 404s for anonymous callers.
  * Admin routes (POST/PATCH/DELETE, and GET too when `publicRead` is unset)
  * always see/affect everything.
+ *
+ * The returned router is the FULL admin router (every verb). It carries a
+ * `reads` property: a GET-only router for the public site. Mount `reads` at
+ * /api/v1/<resource> and the full router under /api/v1/admin/<resource>
+ * (see routes/index.js), so every write lives behind the /admin prefix.
  */
 export function buildCrudRouter({
   repository,
@@ -56,6 +61,14 @@ export function buildCrudRouter({
     }
     sendSuccess(res, { data: item });
   });
+
+  // Public, read-only view of the same resource (empty when it has no public reads).
+  const reads = Router();
+  if (publicRead) {
+    reads.get("/", attachUserIfPresent, listHandler);
+    reads.get("/:id", attachUserIfPresent, detailHandler);
+  }
+  router.reads = reads;
 
   if (publicRead) {
     router.get("/", attachUserIfPresent, listHandler);

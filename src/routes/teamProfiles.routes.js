@@ -2,7 +2,6 @@ import { Router } from "express";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
-import { requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { TeamProfileModel } from "../models/teamProfile.model.js";
 import { upsertTeamProfileSchema } from "../validators/teamProfiles.validator.js";
@@ -21,6 +20,7 @@ const VALID_KEYS = ["chairman", "mukhya_trustee"];
  *       200: { description: Profile found }
  *       400: { description: Invalid profile key }
  *       404: { description: Not created yet }
+ * /api/v1/admin/team-profiles/{key}:
  *   patch:
  *     tags: [Team Profiles]
  *     summary: Create or update a singleton profile (admin, upserts)
@@ -68,6 +68,9 @@ const VALID_KEYS = ["chairman", "mukhya_trustee"];
  */
 export const teamProfilesRouter = Router();
 
+/** Creating and editing the profiles. Mounted at /api/v1/admin/team-profiles. */
+export const adminTeamProfilesRouter = Router();
+
 teamProfilesRouter.get(
   "/:key",
   asyncHandler(async (req, res) => {
@@ -79,9 +82,8 @@ teamProfilesRouter.get(
   }),
 );
 
-teamProfilesRouter.patch(
+adminTeamProfilesRouter.patch(
   "/:key",
-  ...requireAdmin,
   validate(upsertTeamProfileSchema),
   asyncHandler(async (req, res) => {
     const { key } = req.params;

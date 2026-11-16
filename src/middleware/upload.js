@@ -9,6 +9,14 @@ const ALLOWED_MIME = new Set([
   "image/svg+xml",
   "image/gif",
   "application/pdf",
+  // Registration forms: portfolio media and supporting documents.
+  "video/mp4",
+  "video/webm",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/mp4",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
 
 // Buffered in memory rather than written to disk — the route handler streams

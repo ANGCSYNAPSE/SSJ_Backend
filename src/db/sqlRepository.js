@@ -8,7 +8,7 @@ function snakeToCamel(key) {
   return key.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
 }
 
-function rowToEntity(row) {
+export function rowToEntity(row) {
   if (!row) return null;
   const entity = {};
   for (const [key, value] of Object.entries(row)) {
@@ -50,16 +50,22 @@ export function createSqlRepository(table, { jsonColumns = [], defaultOrderBy = 
       return rowToEntity(rows[0]);
     },
 
-    async create(data) {
+    /** The `[text, values]` pair `create` runs — exposed so callers can batch it into a transaction. */
+    insertQuery(data) {
       const entries = Object.entries(data).filter(([, v]) => v !== undefined);
       const columns = entries.map(([k]) => col(k));
       const values = entries.map(([k, v]) => toDbValue(k, v));
       const placeholders = values.map((_, i) => `$${i + 1}`);
 
-      const rows = await sql(
+      return [
         `INSERT INTO ${quotedTable} (${columns.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *`,
         values,
-      );
+      ];
+    },
+
+    async create(data) {
+      const [text, values] = this.insertQuery(data);
+      const rows = await sql(text, values);
       return rowToEntity(rows[0]);
     },
 

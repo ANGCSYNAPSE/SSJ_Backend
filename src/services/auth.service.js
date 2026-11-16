@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { sql } from "../config/database.js";
 import { sendPasswordResetEmail } from "./mail.service.js";
 import { env } from "../config/env.js";
-import { UserModel } from "../models/user.model.js";
+import { UserModel, toUser } from "../models/user.model.js";
+import { listProfilesForUser, missingFieldsFor, profileRepository } from "../models/profile.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
 
@@ -13,8 +14,35 @@ import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
  */
 const hashToken = (token) => createHash("sha256").update(token).digest("hex");
 
+const USER_COLUMNS =
+  "id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at";
+
 export const AuthService = {
-  async signup({ fullName, email, mobile, password }) {
+  /** Adds the categories (artist, temple, ...) the user has registered for. */
+  async withProfiles(user) {
+    if (!user) return user;
+    return { ...user, profiles: await listProfilesForUser(user.id) };
+  },
+
+  /**
+   * Whether an email / mobile already belongs to an account. When the email's owner left a
+   * registration unfinished, says which category, so the form can send them to finish it.
+   */
+  async checkAvailability({ email, mobile }) {
+    const [byEmail, byMobile] = await Promise.all([
+      email ? UserModel.findByEmail(email) : null,
+      mobile ? UserModel.findByMobile(mobile) : null,
+    ]);
+
+    let incomplete = null;
+    if (byEmail) {
+      const unfinished = (await listProfilesForUser(byEmail.id)).find((p) => p.isComplete === false);
+      if (unfinished) incomplete = { category: unfinished.category, missing: unfinished.missing.length };
+    }
+    return { emailTaken: Boolean(byEmail), mobileTaken: Boolean(byMobile), incomplete };
+  },
+
+  async signup({ fullName, email, mobile, password, becomeMember = false, category, profile }) {
     const [byEmail, byMobile] = await Promise.all([
       UserModel.findByEmail(email),
       UserModel.findByMobile(mobile),
@@ -39,18 +67,51 @@ export const AuthService = {
     }
 
     const passwordHash = await bcrypt.hash(password, env.bcryptRounds);
-    const user = await UserModel.create({
-      fullName,
-      email,
-      mobile,
-      passwordHash,
-    });
+
+    let user;
+    if (category) {
+      // The account and its category row are written together: a failed
+      // category insert must not leave behind a half-registered user.
+      const userId = randomUUID();
+      const [profileText, profileValues] = profileRepository(category).insertQuery({
+        ...profile,
+        userId,
+        missingFields: missingFieldsFor(category, profile),
+      });
+      try {
+        const [[userRow]] = await sql.transaction((txn) => [
+          txn(
+            `INSERT INTO users (id, full_name, email, mobile, password_hash, is_member)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${USER_COLUMNS}`,
+            [userId, fullName, email, mobile, passwordHash, becomeMember],
+          ),
+          txn(profileText, profileValues),
+        ]);
+        user = toUser(userRow);
+      } catch (error) {
+        if (error?.code === "23505") {
+          throw ApiError.conflict("This account already exists.");
+        }
+        throw error;
+      }
+    } else {
+      user = await UserModel.create({ fullName, email, mobile, passwordHash, isMember: becomeMember });
+    }
 
     return {
-      user,
+      user: await this.withProfiles(user),
       accessToken: signAccessToken(user),
       refreshToken: signRefreshToken(user),
     };
+  },
+
+  /** Adds a category profile to an account that already exists (e.g. a member who now wants to list a temple). */
+  async addProfile(userId, category, profile) {
+    const repo = profileRepository(category);
+    if (await repo.findOne("user_id = $1", [userId])) {
+      throw ApiError.conflict("You have already registered in this category.");
+    }
+    return repo.create({ ...profile, userId, missingFields: missingFieldsFor(category, profile) });
   },
 
   async login({ email, password }) {
@@ -72,7 +133,7 @@ export const AuthService = {
     await UserModel.touchLastLogin(user.id);
 
     return {
-      user,
+      user: await this.withProfiles(user),
       accessToken: signAccessToken(user),
       refreshToken: signRefreshToken(user),
     };
@@ -124,7 +185,7 @@ export const AuthService = {
     }
 
     return {
-      user,
+      user: await this.withProfiles(user),
       accessToken: signAccessToken(user),
       refreshToken: signRefreshToken(user),
     };

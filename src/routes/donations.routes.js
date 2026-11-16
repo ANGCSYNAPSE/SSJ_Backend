@@ -4,7 +4,6 @@ import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
-import { requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { DonationModel } from "../models/donation.model.js";
 import { createDonationOrderSchema, verifyDonationSchema } from "../validators/donations.validator.js";
@@ -69,7 +68,7 @@ import { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature } f
  *     summary: Public live feed of recent paid donations (latest 20)
  *     responses:
  *       200: { description: Donation feed }
- * /api/v1/donations:
+ * /api/v1/admin/donations:
  *   get:
  *     tags: [Donations]
  *     summary: List donations (admin)
@@ -80,7 +79,7 @@ import { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature } f
  *         schema: { type: string, enum: [created, paid, failed] }
  *     responses:
  *       200: { description: List of donations }
- * /api/v1/donations/{id}/receipt:
+ * /api/v1/admin/donations/{id}/receipt:
  *   get:
  *     tags: [Donations]
  *     summary: Get an 80G-style receipt for a paid donation (admin)
@@ -105,6 +104,9 @@ import { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature } f
  * Mounted at /api/v1/donations.
  */
 export const donationsRouter = Router();
+
+/** Listing donations and issuing receipts. Mounted at /api/v1/admin/donations. */
+export const adminDonationsRouter = Router();
 
 donationsRouter.post(
   "/create-order",
@@ -185,9 +187,8 @@ donationsRouter.get(
   }),
 );
 
-donationsRouter.get(
+adminDonationsRouter.get(
   "/",
-  ...requireAdmin,
   asyncHandler(async (req, res) => {
     const { status } = req.query;
     const items = status ? await DonationModel.list("status = $1", [status]) : await DonationModel.list();
@@ -195,9 +196,8 @@ donationsRouter.get(
   }),
 );
 
-donationsRouter.get(
+adminDonationsRouter.get(
   "/:id/receipt",
-  ...requireAdmin,
   asyncHandler(async (req, res) => {
     const donation = await DonationModel.findById(req.params.id);
     if (!donation || donation.status !== "paid") throw ApiError.notFound();

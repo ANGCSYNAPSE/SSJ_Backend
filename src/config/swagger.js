@@ -96,4 +96,31 @@ const options = {
   apis: ["./src/routes/*.js"],
 };
 
-export const swaggerSpec = swaggerJsdoc(options);
+/**
+ * Content resources built from the shared CRUD router are readable by the
+ * public at /<resource>, but every write (create, edit, delete, publish,
+ * reorder) lives under /admin/<resource>. Their @openapi blocks describe them
+ * together, so the writes are moved to the admin path here rather than
+ * duplicating every block.
+ */
+const ADMIN_WRITE_RESOURCES = [
+  "ads", "blog-posts", "blog-categories", "communities", "donation-content", "events",
+  "initiatives", "organisations", "products", "state-chapters", "team-members",
+];
+const WRITE_VERBS = ["post", "put", "patch", "delete"];
+
+function moveWritesUnderAdmin(spec) {
+  const paths = {};
+  for (const [path, operations] of Object.entries(spec.paths ?? {})) {
+    const match = /^\/api\/v1\/([^/]+)(\/.*)?$/.exec(path);
+    const isContent =
+      match && ADMIN_WRITE_RESOURCES.includes(match[1]) && !path.includes("/volunteers");
+    for (const [verb, operation] of Object.entries(operations)) {
+      const target = isContent && WRITE_VERBS.includes(verb) ? `/api/v1/admin/${match[1]}${match[2] ?? ""}` : path;
+      (paths[target] ??= {})[verb] = operation;
+    }
+  }
+  return { ...spec, paths };
+}
+
+export const swaggerSpec = moveWritesUnderAdmin(swaggerJsdoc(options));

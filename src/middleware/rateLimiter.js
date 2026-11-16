@@ -17,6 +17,13 @@ export const apiLimiter = rateLimit({
   max: 300,
 });
 
+/** The signup availability check can reveal which emails are registered, so keep it modest. */
+export const availabilityLimiter = rateLimit({
+  ...shared,
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+});
+
 /** Tighter limit on credential endpoints to slow brute-force attempts. */
 export const authLimiter = rateLimit({
   ...shared,
