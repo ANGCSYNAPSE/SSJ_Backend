@@ -71,7 +71,14 @@ export const AuthService = {
     }
 
     const passwordHash = await bcrypt.hash(password, env.bcryptRounds);
+    return this.createAccount({ fullName, email, mobile, passwordHash, becomeMember, category, profile });
+  },
 
+  /**
+   * Writes the account (and its category row, if any) and signs it in. `emailVerified` is true when
+   * the person has already proved they own the email (the signup code step).
+   */
+  async createAccount({ fullName, email, mobile, passwordHash, becomeMember = false, category, profile, emailVerified = false }) {
     let user;
     if (category) {
       // The account and its category row are written together: a failed
@@ -85,9 +92,9 @@ export const AuthService = {
       try {
         const [[userRow]] = await sql.transaction((txn) => [
           txn(
-            `INSERT INTO users (id, full_name, email, mobile, password_hash, is_member)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${USER_COLUMNS}`,
-            [userId, fullName, email, mobile, passwordHash, becomeMember],
+            `INSERT INTO users (id, full_name, email, mobile, password_hash, is_member, is_verified)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${USER_COLUMNS}`,
+            [userId, fullName, email, mobile, passwordHash, becomeMember, emailVerified],
           ),
           txn(profileText, profileValues),
         ]);
@@ -99,7 +106,19 @@ export const AuthService = {
         throw error;
       }
     } else {
-      user = await UserModel.create({ fullName, email, mobile, passwordHash, isMember: becomeMember });
+      try {
+        const [row] = await sql(
+          `INSERT INTO users (full_name, email, mobile, password_hash, is_member, is_verified)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${USER_COLUMNS}`,
+          [fullName, email, mobile, passwordHash, becomeMember, emailVerified],
+        );
+        user = toUser(row);
+      } catch (error) {
+        if (error?.code === "23505") {
+          throw ApiError.conflict("This account already exists.");
+        }
+        throw error;
+      }
     }
 
     return {

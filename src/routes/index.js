@@ -14,6 +14,7 @@ import {
 } from "./events.routes.js";
 import { initiativesRouter } from "./initiatives.routes.js";
 import { meRouter } from "./me.routes.js";
+import { signupFlowRouter } from "./signupFlow.routes.js";
 import { adminPaymentsRouter, paymentsRouter } from "./payments.routes.js";
 import { adminNotificationsRouter, notificationsRouter } from "./notifications.routes.js";
 import { organisationsRouter } from "./organisations.routes.js";
@@ -87,6 +88,7 @@ for (const [path, crud] of Object.entries(content)) {
 
 router.use("/admin", admin);
 
+router.use("/auth/signup", signupFlowRouter);
 router.use("/auth", authRoutes);
 router.use("/contact", contactRouter);
 router.use("/donations", donationsRouter);

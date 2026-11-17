@@ -31,3 +31,14 @@ export const authLimiter = rateLimit({
   max: 10,
   skipSuccessfulRequests: true,
 });
+
+/**
+ * The signup steps (code, resend, payment) are several calls per person, so the limit is looser than
+ * for login; each code also has its own cap on wrong tries. Only failed requests count.
+ */
+export const signupFlowLimiter = rateLimit({
+  ...shared,
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  skipSuccessfulRequests: true,
+});

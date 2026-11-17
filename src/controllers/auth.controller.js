@@ -1,6 +1,7 @@
 import { AuthService } from "../services/auth.service.js";
 import { UserModel } from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
+import { env } from "../config/env.js";
 import { sendSuccess } from "../utils/apiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
@@ -12,6 +13,10 @@ import {
 } from "../utils/tokens.js";
 
 export const signup = asyncHandler(async (req, res) => {
+  // The one-step signup skips the email code and the payment; the site uses /auth/signup/start instead.
+  if (!env.allowDirectSignup) {
+    throw new ApiError(410, "Sign up now needs a verification code and a payment. Please use the website.");
+  }
   const { user, accessToken, refreshToken } = await AuthService.signup(
     req.validated,
   );

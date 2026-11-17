@@ -50,6 +50,10 @@ export const env = {
 
   // Where the admin panel lives; password reset emails link back to it.
   adminUrl: (process.env.ADMIN_URL ?? "http://localhost:5173").replace(/\/+$/, ""),
+  // The public website; emails link back to it.
+  siteUrl: (process.env.SITE_URL ?? "http://localhost:3000").replace(/\/+$/, ""),
+  // The old one-step signup skips the email code and the payment, so it stays off unless a test needs it.
+  allowDirectSignup: process.env.ALLOW_DIRECT_SIGNUP === "true",
   passwordResetTtlMinutes: Number(process.env.PASSWORD_RESET_TTL_MINUTES ?? 30),
 
   // Optional. Without SMTP_HOST, reset links are printed to the server log

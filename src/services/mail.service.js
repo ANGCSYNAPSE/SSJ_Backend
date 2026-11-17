@@ -1,5 +1,7 @@
 import nodemailer from "nodemailer";
-import { env } from "../config/env.js";
+import { env, isProduction } from "../config/env.js";
+import { ApiError } from "../utils/ApiError.js";
+import { passwordResetEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
 
 const transporter = env.smtp.host
   ? nodemailer.createTransport({
@@ -10,17 +12,31 @@ const transporter = env.smtp.host
     })
   : null;
 
-export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
+/**
+ * Sends one email. Without SMTP configured, local development prints the message to the server
+ * log (so a code or link can be copied from there); production refuses, because a person waiting
+ * for a code that never arrives is worse than an honest error.
+ */
+async function deliver({ to, subject, text, html }, { log }) {
   if (!transporter) {
-    console.log(`[mail] SMTP not configured — password reset link for ${to}: ${resetUrl}`);
+    if (isProduction) throw ApiError.serviceUnavailable("Email is not available right now. Please try again later.");
+    console.log(`[mail] SMTP not configured. To: ${to} | ${subject}\n${log ?? text}`);
     return;
   }
+  await transporter.sendMail({ from: env.smtp.from, to, subject, text, html });
+}
 
-  await transporter.sendMail({
-    from: env.smtp.from,
-    to,
-    subject: "Reset your Shyam Jagat admin password",
-    text: `Hi ${fullName},\n\nUse the link below to set a new password. It expires in ${env.passwordResetTtlMinutes} minutes.\n\n${resetUrl}\n\nIf you didn't request this, you can ignore this email.`,
-    html: `<p>Hi ${fullName},</p><p>Use the link below to set a new password. It expires in ${env.passwordResetTtlMinutes} minutes.</p><p><a href="${resetUrl}">Reset password</a></p><p>If you didn't request this, you can ignore this email.</p>`,
-  });
+export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
+  const mail = passwordResetEmail({ fullName, resetUrl, minutes: env.passwordResetTtlMinutes });
+  await deliver({ to, ...mail }, { log: `Reset link: ${resetUrl}` });
+}
+
+export async function sendSignupOtpEmail({ to, fullName, code, minutes }) {
+  const mail = signupOtpEmail({ fullName, code, minutes });
+  await deliver({ to, ...mail }, { log: `Verification code: ${code}` });
+}
+
+export async function sendWelcomeEmail({ to, fullName, paid, balance, receipt }) {
+  const mail = welcomeEmail({ fullName, paid, balance, receipt, siteUrl: env.siteUrl });
+  await deliver({ to, ...mail }, {});
 }
