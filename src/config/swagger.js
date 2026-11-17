@@ -14,7 +14,10 @@ const options = {
     servers: [
       { url: `http://localhost:${env.port}`, description: "Local development" },
     ],
-    tags: [{ name: "Auth", description: "Signup, login and session handling" }],
+    tags: [
+      { name: "Auth", description: "Signup, login and session handling" },
+      { name: "Me", description: "The signed-in user's own dashboard and account" },
+    ],
     components: {
       securitySchemes: {
         bearerAuth: {

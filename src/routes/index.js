@@ -13,6 +13,7 @@ import {
   eventsRouter,
 } from "./events.routes.js";
 import { initiativesRouter } from "./initiatives.routes.js";
+import { meRouter } from "./me.routes.js";
 import { adminNotificationsRouter, notificationsRouter } from "./notifications.routes.js";
 import { organisationsRouter } from "./organisations.routes.js";
 import { productsRouter } from "./products.routes.js";
@@ -88,6 +89,7 @@ router.use("/auth", authRoutes);
 router.use("/contact", contactRouter);
 router.use("/donations", donationsRouter);
 router.use("/events/:eventId/volunteers", eventVolunteersRouter);
+router.use("/me", meRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/registrations", registrationsRouter);
 router.use("/settings", settingsRouter);

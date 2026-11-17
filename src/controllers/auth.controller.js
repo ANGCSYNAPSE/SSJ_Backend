@@ -8,6 +8,7 @@ import {
   clearRefreshCookie,
   readRefreshCookie,
   verifyRefreshToken,
+  signRefreshToken,
 } from "../utils/tokens.js";
 
 export const signup = asyncHandler(async (req, res) => {
@@ -31,11 +32,11 @@ export const checkAvailability = asyncHandler(async (req, res) => {
 
 export const login = asyncHandler(async (req, res) => {
   const { remember, ...credentials } = req.validated;
-  const { user, accessToken, refreshToken } = await AuthService.login(
-    credentials,
-  );
+  const { user, accessToken } = await AuthService.login(credentials);
+  // The service signs a default refresh token; re-sign it so "remember me" is carried inside it.
+  const refreshToken = signRefreshToken(user, { remember: remember !== false });
 
-  setRefreshCookie(res, refreshToken, { remember });
+  setRefreshCookie(res, refreshToken, { remember: remember !== false });
 
   return sendSuccess(res, {
     message: "Signed in successfully.",
@@ -57,11 +58,17 @@ export const refresh = asyncHandler(async (req, res) => {
     throw ApiError.unauthorized("Session expired. Please sign in again.");
   }
 
-  const { user, accessToken, refreshToken } = await AuthService.refresh(
-    payload.sub,
-  );
+  const remember = payload.rem !== false;
+  let result;
+  try {
+    result = await AuthService.refresh(payload.sub, { remember });
+  } catch (err) {
+    clearRefreshCookie(res);
+    throw err;
+  }
+  const { user, accessToken, refreshToken } = result;
 
-  setRefreshCookie(res, refreshToken);
+  setRefreshCookie(res, refreshToken, { remember });
 
   return sendSuccess(res, {
     message: "Session refreshed.",

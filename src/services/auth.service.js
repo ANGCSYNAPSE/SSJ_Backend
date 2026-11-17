@@ -178,16 +178,17 @@ export const AuthService = {
     await sql`UPDATE password_resets SET used_at = NOW() WHERE user_id = ${row.user_id} AND used_at IS NULL`;
   },
 
-  async refresh(userId) {
+  async refresh(userId, { remember = true } = {}) {
     const user = await UserModel.findById(userId);
-    if (!user) {
+    if (!user || user.isBlocked) {
       throw ApiError.unauthorized("Session is no longer valid.");
     }
 
     return {
       user: await this.withProfiles(user),
       accessToken: signAccessToken(user),
-      refreshToken: signRefreshToken(user),
+      // A new refresh token each time: the session slides, so someone who keeps using the site stays signed in.
+      refreshToken: signRefreshToken(user, { remember }),
     };
   },
 };
