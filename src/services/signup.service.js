@@ -8,6 +8,8 @@ import { RegistrationPaymentModel } from "../models/registrationPayment.model.js
 import { PAYMENT_APP, PAYMENT_PURPOSE, REGISTRATION_FEE, allowedPayment, feeState } from "../config/plans.js";
 import { AuthService } from "./auth.service.js";
 import { sendSignupOtpEmail, sendWelcomeEmail } from "./mail.service.js";
+import { sendSms, signupOtpText, smsConfigured } from "./sms.service.js";
+import { PROFILE_SCHEMAS } from "../validators/profiles.validator.js";
 import { createRazorpayOrder, verifyPaymentSignature } from "./razorpay.service.js";
 
 /**
@@ -63,20 +65,48 @@ async function feeOf(pendingId) {
   };
 }
 
-async function sendNewCode(pending) {
+/**
+ * Makes a new code and delivers the same code by the chosen channel: "email", "sms" or "both".
+ * Whichever the person uses, the latest code is the one that works.
+ */
+async function sendNewCode(pending, channel = "email") {
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-  await sendSignupOtpEmail({ to: pending.email, fullName: pending.full_name, code, minutes: OTP_MINUTES });
+  const wantsEmail = channel === "email" || channel === "both";
+  const wantsSms = channel === "sms" || channel === "both";
+
+  if (wantsSms && !smsConfigured && !wantsEmail) {
+    throw ApiError.serviceUnavailable("SMS is not available yet. Please use email.");
+  }
+  if (wantsEmail) {
+    await sendSignupOtpEmail({ to: pending.email, fullName: pending.full_name, code, minutes: OTP_MINUTES });
+  }
+  if (wantsSms && smsConfigured) {
+    try {
+      await sendSms({ to: pending.mobile, text: signupOtpText(code, OTP_MINUTES) });
+    } catch (error) {
+      // With "both", a failed text must not block the email that already went out.
+      if (!wantsEmail) throw error;
+      console.error("[sms] could not send the signup code:", error.message);
+    }
+  }
   await sql(
     `UPDATE pending_signups
      SET otp_hash = $2, otp_expires_at = NOW() + ($3 || ' minutes')::interval, otp_attempts = 0, otp_sent_at = NOW()
      WHERE id = $1`,
     [pending.id, hashCode(pending.id, code), String(OTP_MINUTES)],
   );
+  return { email: wantsEmail, sms: wantsSms && smsConfigured };
 }
+
+const maskMobile = (mobile) => `${"*".repeat(Math.max(0, mobile.length - 4))}${mobile.slice(-4)}`;
 
 const summary = (pending, fee) => ({
   pendingId: pending.id,
   email: maskEmail(pending.email),
+  mobile: maskMobile(pending.mobile),
+  category: pending.category ?? null,
+  /** Which ways a code can be sent. SMS turns on when a provider is connected. */
+  channels: { email: true, sms: smsConfigured },
   emailVerified: Boolean(pending.email_verified_at),
   otpMinutes: OTP_MINUTES,
   resendAfterSeconds: RESEND_AFTER_SECONDS,
@@ -88,7 +118,7 @@ export const SignupService = {
    * Saves the details and emails the first code. Run again with the same email (the person came
    * back), it refreshes the same pending signup, so a payment already made is not lost.
    */
-  async start({ fullName, email, mobile, password, becomeMember = false, category, profile }) {
+  async start({ fullName, email, mobile, password, becomeMember = false, category, profile }, channel = "email") {
     const [byEmail, byMobile] = await Promise.all([UserModel.findByEmail(email), UserModel.findByMobile(mobile)]);
     const conflicts = [];
     if (byEmail) conflicts.push({ field: "email", message: "An account with this email already exists." });
@@ -126,11 +156,11 @@ export const SignupService = {
       );
     }
 
-    await sendNewCode(pending);
-    return summary(pending, await feeOf(pending.id));
+    const sent = await sendNewCode(pending, channel);
+    return { ...summary(pending, await feeOf(pending.id)), sentBy: sent };
   },
 
-  async resend(pendingId) {
+  async resend(pendingId, channel = "email") {
     const pending = await loadPending(pendingId);
     if (pending.email_verified_at) throw ApiError.conflict("Your email is already verified.");
     if (pending.resend_count >= MAX_RESENDS) {
@@ -141,8 +171,8 @@ export const SignupService = {
       throw ApiError.tooManyRequests(`Please wait ${Math.ceil(RESEND_AFTER_SECONDS - waited)} seconds before asking for another code.`);
     }
     await sql(`UPDATE pending_signups SET resend_count = resend_count + 1 WHERE id = $1`, [pending.id]);
-    await sendNewCode(pending);
-    return { sent: true, resendAfterSeconds: RESEND_AFTER_SECONDS };
+    const sent = await sendNewCode(pending, channel);
+    return { sent: true, sentBy: sent, resendAfterSeconds: RESEND_AFTER_SECONDS };
   },
 
   async verifyOtp(pendingId, code) {
@@ -164,6 +194,28 @@ export const SignupService = {
       [pending.id],
     );
     return summary(verified, await feeOf(pending.id));
+  },
+
+  /**
+   * Saves the registration details (the artist, temple, ... form) on a verified signup, ready for the
+   * payment step. The same rules as a real registration apply, so mistakes are reported per field.
+   */
+  async setProfile(pendingId, profile) {
+    const pending = await loadPending(pendingId);
+    if (!pending.email_verified_at) throw ApiError.badRequest("Please verify your email first.");
+    if (!pending.category) throw ApiError.badRequest("This registration has no category.");
+    const parsed = PROFILE_SCHEMAS[pending.category].safeParse(profile ?? {});
+    if (!parsed.success) {
+      throw ApiError.badRequest(
+        "Validation failed.",
+        parsed.error.issues.map((issue) => ({ field: ["profile", ...issue.path].join("."), message: issue.message })),
+      );
+    }
+    const [saved] = await sql(`UPDATE pending_signups SET profile = $2::jsonb WHERE id = $1 RETURNING *`, [
+      pending.id,
+      JSON.stringify(parsed.data),
+    ]);
+    return summary(saved, await feeOf(pending.id));
   },
 
   /** A Razorpay order for a verified signup, for an amount the fee rules allow. */

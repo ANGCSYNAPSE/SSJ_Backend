@@ -66,6 +66,11 @@ export const env = {
     from: process.env.SMTP_FROM ?? "Shyam Jagat <no-reply@shyamjagat.com>",
   },
 
+  // Text messages. Empty until an SMS provider is chosen; signup then offers email only.
+  sms: {
+    provider: process.env.SMS_PROVIDER,
+  },
+
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,

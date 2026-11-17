@@ -18,6 +18,8 @@ const pendingId = z.string().uuid("This registration is not valid. Please start 
 
 const verifyOtpSchema = z.object({ pendingId, code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code.") });
 const resendSchema = z.object({ pendingId });
+const channelSchema = z.enum(["email", "sms", "both"]).default("email");
+const profileSchema = z.object({ pendingId, profile: z.record(z.unknown()) });
 const orderSchema = z.object({
   pendingId,
   amount: z.number({ message: "Enter an amount in rupees." }).int("Enter a whole number of rupees.").positive(),
@@ -44,8 +46,8 @@ function sendAccount(res, result) {
  * /api/v1/auth/signup/start:
  *   post:
  *     tags: [Auth]
- *     summary: Step 1. Save the signup details and email a 6-digit code
- *     description: Same body as the old signup (including category and profile for artists, temples and so on). Nothing is created yet. Returns { pendingId, email (masked), otpMinutes, resendAfterSeconds, fee }.
+ *     summary: Step 1. Save the account details and send a 6-digit code (right after the first form step)
+ *     description: Same body as the old signup, plus an optional channel (email, sms or both). For artists, temples and so on send the category and the account fields; the rest of the form follows after verification. Nothing is created yet. Returns { pendingId, email (masked), otpMinutes, resendAfterSeconds, fee }.
  *     responses:
  *       200: { description: Code sent }
  *       409: { description: Email or mobile already has an account }
@@ -63,6 +65,13 @@ function sendAccount(res, result) {
  *     responses:
  *       200: { description: "Verified, with the fee details for step 3" }
  *       400: { description: Wrong or expired code }
+ * /api/v1/auth/signup/profile:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Step 3a. Save the artist / temple / ... details on a verified signup (after the form is finished)
+ *     responses:
+ *       200: { description: Saved }
+ *       400: { description: Per-field validation errors }
  * /api/v1/auth/signup/pay/order:
  *   post:
  *     tags: [Auth]
@@ -87,7 +96,8 @@ signupFlowRouter.post(
   authLimiter,
   validate(signupSchema),
   asyncHandler(async (req, res) => {
-    sendSuccess(res, { message: "We have emailed you a code.", data: await SignupService.start(req.validated) });
+    const channel = channelSchema.parse(req.body?.channel);
+    sendSuccess(res, { message: "We have sent you a code.", data: await SignupService.start(req.validated, channel) });
   }),
 );
 
@@ -96,7 +106,8 @@ signupFlowRouter.post(
   authLimiter,
   validate(resendSchema),
   asyncHandler(async (req, res) => {
-    sendSuccess(res, { message: "A new code is on its way.", data: await SignupService.resend(req.validated.pendingId) });
+    const channel = channelSchema.parse(req.body?.channel);
+    sendSuccess(res, { message: "A new code is on its way.", data: await SignupService.resend(req.validated.pendingId, channel) });
   }),
 );
 
@@ -107,6 +118,15 @@ signupFlowRouter.post(
   asyncHandler(async (req, res) => {
     const { pendingId: id, code } = req.validated;
     sendSuccess(res, { message: "Email verified.", data: await SignupService.verifyOtp(id, code) });
+  }),
+);
+
+signupFlowRouter.post(
+  "/profile",
+  authLimiter,
+  validate(profileSchema),
+  asyncHandler(async (req, res) => {
+    sendSuccess(res, { message: "Details saved.", data: await SignupService.setProfile(req.validated.pendingId, req.validated.profile) });
   }),
 );
 
