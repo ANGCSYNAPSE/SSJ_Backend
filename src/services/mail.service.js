@@ -23,7 +23,13 @@ async function deliver({ to, subject, text, html }, { log }) {
     console.log(`[mail] SMTP not configured. To: ${to} | ${subject}\n${log ?? text}`);
     return;
   }
-  await transporter.sendMail({ from: env.smtp.from, to, subject, text, html });
+  try {
+    await transporter.sendMail({ from: env.smtp.from, to, subject, text, html });
+  } catch (error) {
+    // The provider's message ("535 Authentication failed", ...) is for the server log, not for the person signing up.
+    console.error(`[mail] could not send "${subject}" to ${to}: ${error.message}`);
+    throw ApiError.serviceUnavailable("We could not send the email right now. Please try again in a few minutes.");
+  }
 }
 
 export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
