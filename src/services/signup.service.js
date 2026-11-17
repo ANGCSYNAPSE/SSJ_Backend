@@ -9,7 +9,13 @@ import { PAYMENT_APP, PAYMENT_PURPOSE, REGISTRATION_FEE, allowedPayment, feeStat
 import { AuthService } from "./auth.service.js";
 import { sendSignupOtpEmail, sendWelcomeEmail } from "./mail.service.js";
 import { sendSms, signupOtpText, smsConfigured } from "./sms.service.js";
+import { z } from "zod";
 import { PROFILE_SCHEMAS } from "../validators/profiles.validator.js";
+
+const MEMBER_DETAILS = z.object({
+  city: z.string().trim().min(1, "Please enter your city.").max(80),
+  state: z.string().trim().min(1, "Please choose your state.").max(80),
+});
 import { createRazorpayOrder, verifyPaymentSignature } from "./razorpay.service.js";
 
 /**
@@ -203,8 +209,9 @@ export const SignupService = {
   async setProfile(pendingId, profile) {
     const pending = await loadPending(pendingId);
     if (!pending.email_verified_at) throw ApiError.badRequest("Please verify your email first.");
-    if (!pending.category) throw ApiError.badRequest("This registration has no category.");
-    const parsed = PROFILE_SCHEMAS[pending.category].safeParse(profile ?? {});
+    // A plain member has no category form: their details are just where they live.
+    const schema = pending.category ? PROFILE_SCHEMAS[pending.category] : MEMBER_DETAILS;
+    const parsed = schema.safeParse(profile ?? {});
     if (!parsed.success) {
       throw ApiError.badRequest(
         "Validation failed.",
@@ -289,6 +296,8 @@ export const SignupService = {
       becomeMember: pending.become_member,
       category: pending.category ?? undefined,
       profile: pending.profile ?? undefined,
+      // A plain member's details are where they live, kept on the account itself.
+      location: pending.category ? undefined : [pending.profile?.city, pending.profile?.state].filter(Boolean).join(", ") || undefined,
       emailVerified: true,
     });
 

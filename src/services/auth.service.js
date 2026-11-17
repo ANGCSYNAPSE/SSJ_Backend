@@ -78,7 +78,7 @@ export const AuthService = {
    * Writes the account (and its category row, if any) and signs it in. `emailVerified` is true when
    * the person has already proved they own the email (the signup code step).
    */
-  async createAccount({ fullName, email, mobile, passwordHash, becomeMember = false, category, profile, emailVerified = false }) {
+  async createAccount({ fullName, email, mobile, passwordHash, becomeMember = false, category, profile, location, emailVerified = false }) {
     let user;
     if (category) {
       // The account and its category row are written together: a failed
@@ -108,9 +108,9 @@ export const AuthService = {
     } else {
       try {
         const [row] = await sql(
-          `INSERT INTO users (full_name, email, mobile, password_hash, is_member, is_verified)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${USER_COLUMNS}`,
-          [fullName, email, mobile, passwordHash, becomeMember, emailVerified],
+          `INSERT INTO users (full_name, email, mobile, password_hash, is_member, is_verified, location)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${USER_COLUMNS}`,
+          [fullName, email, mobile, passwordHash, becomeMember, emailVerified, location ?? null],
         );
         user = toUser(row);
       } catch (error) {
