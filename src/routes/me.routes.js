@@ -9,6 +9,8 @@ import { validate } from "../middleware/validate.js";
 import { UserModel } from "../models/user.model.js";
 import { NotificationModel } from "../models/notification.model.js";
 import { findProfileByUser, listProfilesForUser } from "../models/profile.model.js";
+import { feeStatusFor } from "./payments.routes.js";
+import { REGISTRATION_PLANS } from "../config/plans.js";
 import { REQUIRED_FIELDS } from "../validators/profiles.validator.js";
 
 /** The signed-in user's own account page. Mounted at /api/v1/me. */
@@ -91,6 +93,7 @@ meRouter.get(
     const required = profiles.reduce((sum, p) => sum + p.requiredCount, 0) + accountChecks.length;
     const missing = profiles.reduce((sum, p) => sum + p.missing.length, 0) + accountChecks.filter((c) => !c.filled).length;
 
+    const registrationFee = await feeStatusFor(user.id);
     const [unread, donations] = await Promise.all([
       NotificationModel.listUnread(user.id, 5),
       sql(
@@ -113,6 +116,7 @@ meRouter.get(
           missingAccount: accountChecks.filter((c) => !c.filled).map((c) => c.key),
         },
         profiles,
+        registrationFee: { ...registrationFee, plans: REGISTRATION_PLANS },
         notifications: { unread: unread.length, recent: unread },
         donations: {
           count: totals?.count ?? 0,

@@ -17,6 +17,7 @@ const options = {
     tags: [
       { name: "Auth", description: "Signup, login and session handling" },
       { name: "Me", description: "The signed-in user's own dashboard and account" },
+      { name: "Payments", description: "Registration fee (Rs 501 / Rs 1100) and the admin payment reports" },
     ],
     components: {
       securitySchemes: {
