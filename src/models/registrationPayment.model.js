@@ -1,7 +1,10 @@
 import { sql } from "../config/database.js";
 import { createSqlRepository, rowToEntity } from "../db/sqlRepository.js";
+import { REGISTRATION_FEE } from "../config/plans.js";
 
 const repo = createSqlRepository("registration_payments");
+
+const TOTAL = REGISTRATION_FEE.total;
 
 export const RegistrationPaymentModel = {
   ...repo,
@@ -11,18 +14,15 @@ export const RegistrationPaymentModel = {
   /** A person's attempts, newest first. */
   listForUser: (userId) => repo.list("user_id = $1", [userId]),
 
-  async hasPaid(userId) {
-    const rows = await sql(`SELECT 1 FROM registration_payments WHERE user_id = $1 AND status = 'paid' LIMIT 1`, [userId]);
-    return rows.length > 0;
-  },
-
-  /** The paid row for a user, if any. */
-  async findPaid(userId) {
+  /** How much a person has paid so far, in rupees, and when they last paid. */
+  async paidSummary(userId) {
     const rows = await sql(
-      `SELECT * FROM registration_payments WHERE user_id = $1 AND status = 'paid' ORDER BY paid_at DESC LIMIT 1`,
+      `SELECT COALESCE(SUM(amount_in_rupees), 0)::float AS paid, MAX(paid_at) AS last_paid_at,
+              (SELECT receipt FROM registration_payments WHERE user_id = $1 AND status = 'paid' ORDER BY paid_at DESC LIMIT 1) AS last_receipt
+       FROM registration_payments WHERE user_id = $1 AND status = 'paid'`,
       [userId],
     );
-    return rowToEntity(rows[0]);
+    return { paid: rows[0].paid, lastPaidAt: rows[0].last_paid_at, lastReceipt: rows[0].last_receipt };
   },
 
   /** Marks an order paid (idempotent: an already-paid order keeps its first paid_at). */
@@ -84,26 +84,32 @@ export const RegistrationPaymentModel = {
     };
   },
 
-  /** Users who have not paid yet (admins excluded), with their last attempt and registrations. */
-  async listPendingUsers({ q, limit = 25, offset = 0 }) {
-    const params = [];
+  /**
+   * People who still owe something (admins excluded): nothing paid yet, or part paid with a
+   * balance. `state` filters to "pending" (nothing paid) or "partial" (part paid).
+   */
+  async listOwingUsers({ q, state, limit = 25, offset = 0 }) {
+    const params = [TOTAL];
     let search = "";
     if (q) {
       params.push(`%${q}%`);
-      search = `AND (u.full_name ILIKE $1 OR u.email ILIKE $1 OR u.mobile ILIKE $1)`;
+      search = `AND (u.full_name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.mobile ILIKE $${params.length})`;
     }
+    const stateSql = state === "partial" ? "AND d.paid > 0" : state === "pending" ? "AND d.paid = 0" : "";
     const rows = await sql(
-      `SELECT u.id, u.full_name, u.email, u.mobile, u.created_at, COUNT(*) OVER()::int AS total_rows,
+      `SELECT u.id, u.full_name, u.email, u.mobile, u.created_at, d.paid, COUNT(*) OVER()::int AS total_rows,
               (SELECT COALESCE(json_agg(r.type), '[]'::json) FROM all_registrations r WHERE r.user_id = u.id) AS registrations,
-              last.status AS last_status, last.plan AS last_plan, last.amount_in_rupees AS last_amount, last.created_at AS last_attempt_at
+              last.status AS last_status, last.amount_in_rupees AS last_amount, last.created_at AS last_attempt_at
        FROM users u
+       CROSS JOIN LATERAL (
+         SELECT COALESCE(SUM(amount_in_rupees), 0)::float AS paid FROM registration_payments
+         WHERE user_id = u.id AND status = 'paid'
+       ) d
        LEFT JOIN LATERAL (
-         SELECT status, plan, amount_in_rupees, created_at FROM registration_payments
+         SELECT status, amount_in_rupees, created_at FROM registration_payments
          WHERE user_id = u.id ORDER BY created_at DESC LIMIT 1
        ) last ON TRUE
-       WHERE u.deleted_at IS NULL AND u.role <> 'admin'
-         AND NOT EXISTS (SELECT 1 FROM registration_payments p WHERE p.user_id = u.id AND p.status = 'paid')
-         ${search}
+       WHERE u.deleted_at IS NULL AND u.role <> 'admin' AND d.paid < $1 ${stateSql} ${search}
        ORDER BY u.created_at DESC LIMIT ${Number(limit)} OFFSET ${Number(offset)}`,
       params,
     );
@@ -116,8 +122,11 @@ export const RegistrationPaymentModel = {
         mobile: row.mobile,
         joinedAt: row.created_at,
         registrations: row.registrations,
+        state: row.paid > 0 ? "partial" : "pending",
+        paid: row.paid,
+        balance: TOTAL - row.paid,
         lastAttempt: row.last_status
-          ? { status: row.last_status, plan: row.last_plan, amount: Number(row.last_amount), at: row.last_attempt_at }
+          ? { status: row.last_status, amount: Number(row.last_amount), at: row.last_attempt_at }
           : null,
       })),
     };
@@ -125,35 +134,42 @@ export const RegistrationPaymentModel = {
 
   /** Money and head-counts for the admin dashboard. */
   async summary() {
-    const [paid] = await sql(
-      `SELECT COUNT(DISTINCT user_id)::int AS payers, COALESCE(SUM(amount_in_rupees), 0)::float AS total
+    const [counts] = await sql(
+      `SELECT COUNT(*) FILTER (WHERE d.paid >= $1)::int AS fully_paid,
+              COUNT(*) FILTER (WHERE d.paid > 0 AND d.paid < $1)::int AS partial,
+              COUNT(*) FILTER (WHERE d.paid = 0)::int AS unpaid,
+              COALESCE(SUM(GREATEST($1 - d.paid, 0)), 0)::float AS outstanding,
+              COUNT(*)::int AS members
+       FROM users u
+       CROSS JOIN LATERAL (
+         SELECT COALESCE(SUM(amount_in_rupees), 0)::float AS paid FROM registration_payments
+         WHERE user_id = u.id AND status = 'paid'
+       ) d
+       WHERE u.deleted_at IS NULL AND u.role <> 'admin'`,
+      [TOTAL],
+    );
+    const [collected] = await sql(
+      `SELECT COALESCE(SUM(amount_in_rupees), 0)::float AS total, COUNT(*)::int AS payments,
+              COALESCE(SUM(amount_in_rupees) FILTER (WHERE paid_at >= date_trunc('day', NOW())), 0)::float AS today_total,
+              COUNT(*) FILTER (WHERE paid_at >= date_trunc('day', NOW()))::int AS today_count
        FROM registration_payments WHERE status = 'paid'`,
-    );
-    const byPlan = await sql(
-      `SELECT plan, COUNT(*)::int AS count, COALESCE(SUM(amount_in_rupees), 0)::float AS total
-       FROM registration_payments WHERE status = 'paid' GROUP BY plan ORDER BY plan`,
-    );
-    const [pending] = await sql(
-      `SELECT COUNT(*)::int AS users FROM users u
-       WHERE u.deleted_at IS NULL AND u.role <> 'admin'
-         AND NOT EXISTS (SELECT 1 FROM registration_payments p WHERE p.user_id = u.id AND p.status = 'paid')`,
     );
     const [attempts] = await sql(
       `SELECT COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
               COUNT(*) FILTER (WHERE status = 'created')::int AS abandoned
-       FROM registration_payments p
-       WHERE NOT EXISTS (SELECT 1 FROM registration_payments q WHERE q.user_id = p.user_id AND q.status = 'paid')`,
+       FROM registration_payments`,
     );
-    const [today] = await sql(
-      `SELECT COALESCE(SUM(amount_in_rupees), 0)::float AS total, COUNT(*)::int AS count
-       FROM registration_payments WHERE status = 'paid' AND paid_at >= date_trunc('day', NOW())`,
-    );
-    const everyone = paid.payers + pending.users;
+    const expected = counts.members * TOTAL;
     return {
-      collected: { amount: paid.total, payers: paid.payers, today: { amount: today.total, count: today.count } },
-      byPlan: byPlan.map((row) => ({ plan: row.plan, count: row.count, amount: row.total })),
-      pending: { users: pending.users, failedAttempts: attempts.failed, abandonedCheckouts: attempts.abandoned },
-      collectionRate: everyone === 0 ? 0 : Math.round((paid.payers / everyone) * 100),
+      fee: { total: TOTAL, minimum: REGISTRATION_FEE.minimum },
+      collected: {
+        amount: collected.total,
+        payments: collected.payments,
+        today: { amount: collected.today_total, count: collected.today_count },
+      },
+      members: { total: counts.members, fullyPaid: counts.fully_paid, partial: counts.partial, unpaid: counts.unpaid },
+      outstanding: { amount: counts.outstanding, failedAttempts: attempts.failed, abandonedCheckouts: attempts.abandoned },
+      collectionRate: expected === 0 ? 0 : Math.round((collected.total / expected) * 100),
     };
   },
 };

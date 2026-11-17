@@ -8,7 +8,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { validate, validateQuery } from "../middleware/validate.js";
 import { UserModel } from "../models/user.model.js";
 import { RegistrationPaymentModel } from "../models/registrationPayment.model.js";
-import { PAYMENT_APP, PAYMENT_PURPOSE, REGISTRATION_PLANS, planById } from "../config/plans.js";
+import { PAYMENT_APP, PAYMENT_PURPOSE, REGISTRATION_FEE, allowedPayment, feeState } from "../config/plans.js";
 import {
   adminPaymentsQuerySchema,
   adminPendingQuerySchema,
@@ -41,38 +41,51 @@ const money = (row) => ({
   createdAt: row.createdAt,
 });
 
-/** "Paid" or "pending", with the details of the successful payment when there is one. */
+/**
+ * Where a person stands on the registration fee: how much is paid, what is left, and what they
+ * may pay next. `status` is pending (nothing paid), partial (part paid) or paid (all of it).
+ */
 export async function feeStatusFor(userId) {
-  const paid = await RegistrationPaymentModel.findPaid(userId);
-  return paid
-    ? { status: "paid", plan: paid.plan, amount: Number(paid.amountInRupees), paidAt: paid.paidAt, receipt: paid.receipt }
-    : { status: "pending", plan: null, amount: null, paidAt: null, receipt: null };
+  const { paid, lastPaidAt, lastReceipt } = await RegistrationPaymentModel.paidSummary(userId);
+  const next = allowedPayment(paid);
+  return {
+    status: feeState(paid),
+    total: REGISTRATION_FEE.total,
+    minimum: REGISTRATION_FEE.minimum,
+    paid,
+    balance: next.balance,
+    nextMin: next.min,
+    nextMax: next.max,
+    lastPaidAt,
+    receipt: lastReceipt,
+  };
 }
 
 /**
  * @openapi
- * /api/v1/payments/plans:
+ * /api/v1/payments/fee:
  *   get:
  *     tags: [Payments]
- *     summary: The registration fee options (Rs 501 or Rs 1100)
+ *     summary: The registration fee rules (total Rs 1100, first payment at least Rs 501)
  *     responses:
- *       200: { description: "[{ id, label, amount, description }]" }
+ *       200: { description: "{ total, minimum }" }
  * /api/v1/payments/me:
  *   get:
  *     tags: [Payments]
- *     summary: Has the signed-in user paid the registration fee? Their attempts, newest first
+ *     summary: Where the signed-in user stands on the registration fee, and their payment attempts
  *     security: [{ bearerAuth: [] }]
  *     responses:
- *       200: { description: "{ fee: { status: paid|pending, plan, amount, paidAt }, plans, history[] }" }
+ *       200: { description: "{ fee: { status: pending|partial|paid, total, paid, balance, nextMin, nextMax }, history[] }" }
  * /api/v1/payments/registration/order:
  *   post:
  *     tags: [Payments]
- *     summary: Start paying the registration fee (creates a Razorpay order)
- *     description: "Send { plan: basic|premium }. Pass the result to Razorpay Checkout, then call /verify."
+ *     summary: Pay towards the registration fee (creates a Razorpay order)
+ *     description: "Send { amount } in rupees: at least nextMin and at most nextMax from /payments/me (the first payment is at least Rs 501; the balance can be paid later). Pass the result to Razorpay Checkout, then call /verify."
  *     security: [{ bearerAuth: [] }]
  *     responses:
- *       201: { description: "{ orderId, amount (paise), currency, keyId, plan, prefill }" }
- *       409: { description: Already paid }
+ *       201: { description: "{ orderId, amount (paise), currency, keyId, prefill }" }
+ *       400: { description: Amount outside what is allowed }
+ *       409: { description: Fee already paid in full }
  * /api/v1/payments/registration/verify:
  *   post:
  *     tags: [Payments]
@@ -82,8 +95,8 @@ export async function feeStatusFor(userId) {
  *       200: { description: "{ fee }" }
  *       400: { description: Signature mismatch }
  */
-paymentsRouter.get("/plans", (_req, res) => {
-  sendSuccess(res, { data: REGISTRATION_PLANS });
+paymentsRouter.get("/fee", (_req, res) => {
+  sendSuccess(res, { data: REGISTRATION_FEE });
 });
 
 paymentsRouter.get(
@@ -91,7 +104,7 @@ paymentsRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const [fee, history] = await Promise.all([feeStatusFor(req.user.id), RegistrationPaymentModel.listForUser(req.user.id)]);
-    sendSuccess(res, { data: { fee, plans: REGISTRATION_PLANS, history: history.map(money) } });
+    sendSuccess(res, { data: { fee, history: history.map(money) } });
   }),
 );
 
@@ -100,26 +113,36 @@ paymentsRouter.post(
   requireAuth,
   validate(registrationOrderSchema),
   asyncHandler(async (req, res) => {
-    const plan = planById(req.validated.plan);
-    if (await RegistrationPaymentModel.hasPaid(req.user.id)) {
-      throw ApiError.conflict("You have already paid the registration fee.");
-    }
+    const { amount } = req.validated;
     const user = await UserModel.findById(req.user.id);
     if (!user) throw ApiError.notFound("Account not found.");
 
+    const { paid } = await RegistrationPaymentModel.paidSummary(user.id);
+    const next = allowedPayment(paid);
+    if (next.balance <= 0) throw ApiError.conflict("The registration fee is already paid in full.");
+    if (amount > next.max) throw ApiError.badRequest(`Only ₹${next.max} is still due.`);
+    if (amount < next.min) {
+      throw ApiError.badRequest(
+        next.min === next.balance
+          ? `Please pay the remaining ₹${next.balance}.`
+          : `The minimum payment is ₹${next.min}.`,
+      );
+    }
+    const kind = amount === next.balance ? "full" : "part";
+
     // The receipt and notes mark this as a Shyam Jagat registration fee in the Razorpay dashboard,
     // and are what the webhook checks before it touches anything.
-    const receipt = `SJ-REG-${req.user.id.slice(0, 8)}-${Date.now()}`;
+    const receipt = `SJ-REG-${user.id.slice(0, 8)}-${Date.now()}`;
     const order = await createRazorpayOrder({
-      amountInPaise: plan.amount * 100,
+      amountInPaise: amount * 100,
       receipt,
-      notes: { app: PAYMENT_APP, purpose: PAYMENT_PURPOSE, user_id: user.id, plan: plan.id, name: user.fullName },
+      notes: { app: PAYMENT_APP, purpose: PAYMENT_PURPOSE, user_id: user.id, kind, name: user.fullName },
     });
 
     await RegistrationPaymentModel.create({
       userId: user.id,
-      plan: plan.id,
-      amountInRupees: plan.amount,
+      plan: kind,
+      amountInRupees: amount,
       status: "created",
       receipt,
       razorpayOrderId: order.id,
@@ -134,8 +157,8 @@ paymentsRouter.post(
         amount: order.amount,
         currency: order.currency,
         keyId: env.razorpay.keyId,
-        plan: plan.id,
-        label: plan.label,
+        kind,
+        label: kind === "full" ? "Registration fee" : "Registration fee (part payment)",
         prefill: { name: user.fullName, email: user.email, contact: user.mobile },
       },
     });
@@ -203,23 +226,23 @@ registrationWebhookRouter.post(
  * /api/v1/admin/payments/summary:
  *   get:
  *     tags: [Payments]
- *     summary: Registration fee totals (admin)
+ *     summary: "Registration fee totals - collected, members fully paid / part paid / unpaid, outstanding balance (admin)"
  *     security: [{ bearerAuth: [] }]
  *     responses:
- *       200: { description: "{ collected: { amount, payers, today }, byPlan[], pending: { users, failedAttempts, abandonedCheckouts }, collectionRate }" }
+ *       200: { description: "{ fee, collected: { amount, payments, today }, members: { total, fullyPaid, partial, unpaid }, outstanding: { amount, failedAttempts, abandonedCheckouts }, collectionRate }" }
  * /api/v1/admin/payments:
  *   get:
  *     tags: [Payments]
  *     summary: Every payment attempt with the payer (admin)
- *     description: "Filters: status (created|paid|failed), plan (basic|premium|manual), userId, q (name, email or mobile), from, to, page, limit."
+ *     description: "Filters: status (created|paid|failed), plan (part|full|manual), userId, q (name, email or mobile), from, to, page, limit."
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       200: { description: "{ items[], total, page, limit }" }
  * /api/v1/admin/payments/pending:
  *   get:
  *     tags: [Payments]
- *     summary: People who have not paid the registration fee yet (admin)
- *     description: Each with their registrations and last payment attempt. Filters q, page, limit.
+ *     summary: People who still owe something on the registration fee (admin)
+ *     description: "Each with paid so far, balance, their registrations and last payment attempt. Filters: state (pending = nothing paid, partial = part paid), q, page, limit."
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       200: { description: "{ items[], total, page, limit }" }
@@ -242,8 +265,8 @@ adminPaymentsRouter.get(
   "/pending",
   validateQuery(adminPendingQuerySchema),
   asyncHandler(async (req, res) => {
-    const { q, page, limit } = req.validatedQuery;
-    const { items, total } = await RegistrationPaymentModel.listPendingUsers({ q, limit, offset: (page - 1) * limit });
+    const { q, state, page, limit } = req.validatedQuery;
+    const { items, total } = await RegistrationPaymentModel.listOwingUsers({ q, state, limit, offset: (page - 1) * limit });
     sendSuccess(res, { data: { items, total, page, limit } });
   }),
 );
@@ -265,7 +288,10 @@ adminPaymentsRouter.post(
     const { userId, amount, reference, note } = req.validated;
     const user = await UserModel.findById(userId);
     if (!user) throw ApiError.notFound("Account not found.");
-    if (await RegistrationPaymentModel.hasPaid(userId)) throw ApiError.conflict("This person has already paid.");
+    const { paid } = await RegistrationPaymentModel.paidSummary(userId);
+    const { balance } = allowedPayment(paid);
+    if (balance <= 0) throw ApiError.conflict("This person has already paid in full.");
+    if (amount > balance) throw ApiError.badRequest(`Only ₹${balance} is still due.`);
 
     const row = await RegistrationPaymentModel.create({
       userId,

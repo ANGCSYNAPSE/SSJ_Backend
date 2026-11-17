@@ -10,7 +10,6 @@ import { UserModel } from "../models/user.model.js";
 import { NotificationModel } from "../models/notification.model.js";
 import { findProfileByUser, listProfilesForUser } from "../models/profile.model.js";
 import { feeStatusFor } from "./payments.routes.js";
-import { REGISTRATION_PLANS } from "../config/plans.js";
 import { REQUIRED_FIELDS } from "../validators/profiles.validator.js";
 
 /** The signed-in user's own account page. Mounted at /api/v1/me. */
@@ -116,7 +115,7 @@ meRouter.get(
           missingAccount: accountChecks.filter((c) => !c.filled).map((c) => c.key),
         },
         profiles,
-        registrationFee: { ...registrationFee, plans: REGISTRATION_PLANS },
+        registrationFee,
         notifications: { unread: unread.length, recent: unread },
         donations: {
           count: totals?.count ?? 0,

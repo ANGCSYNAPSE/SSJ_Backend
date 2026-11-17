@@ -6,6 +6,7 @@ import { env } from "../config/env.js";
 import { UserModel, toUser } from "../models/user.model.js";
 import { listProfilesForUser, missingFieldsFor, profileRepository } from "../models/profile.model.js";
 import { RegistrationPaymentModel } from "../models/registrationPayment.model.js";
+import { feeState } from "../config/plans.js";
 import { ApiError } from "../utils/ApiError.js";
 import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
 
@@ -22,9 +23,9 @@ export const AuthService = {
   /** Adds the categories (artist, temple, ...) the user has registered for. */
   async withProfiles(user) {
     if (!user) return user;
-    const [profiles, paid] = await Promise.all([listProfilesForUser(user.id), RegistrationPaymentModel.hasPaid(user.id)]);
+    const [profiles, { paid }] = await Promise.all([listProfilesForUser(user.id), RegistrationPaymentModel.paidSummary(user.id)]);
     // Admins never pay a fee.
-    return { ...user, profiles, registrationFee: user.role === "admin" || paid ? "paid" : "pending" };
+    return { ...user, profiles, registrationFee: user.role === "admin" ? "paid" : feeState(paid) };
   },
 
   /**

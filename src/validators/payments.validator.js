@@ -1,7 +1,8 @@
 import { z } from "zod";
 
+/** A payment towards the registration fee, in whole rupees. The route checks it against what is still owed. */
 export const registrationOrderSchema = z.object({
-  plan: z.enum(["basic", "premium"], { message: "Choose a plan: basic or premium." }),
+  amount: z.number({ message: "Enter an amount in rupees." }).int("Enter a whole number of rupees.").positive(),
 });
 
 export const verifyRegistrationPaymentSchema = z.object({
@@ -17,7 +18,7 @@ const pageParams = {
 
 export const adminPaymentsQuerySchema = z.object({
   status: z.enum(["created", "paid", "failed"]).optional(),
-  plan: z.enum(["basic", "premium", "manual"]).optional(),
+  plan: z.enum(["part", "full", "manual"]).optional(),
   userId: z.string().uuid().optional(),
   q: z.string().trim().min(1).max(100).optional(),
   from: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
@@ -26,6 +27,7 @@ export const adminPaymentsQuerySchema = z.object({
 });
 
 export const adminPendingQuerySchema = z.object({
+  state: z.enum(["pending", "partial"]).optional(),
   q: z.string().trim().min(1).max(100).optional(),
   ...pageParams,
 });
@@ -33,7 +35,7 @@ export const adminPendingQuerySchema = z.object({
 /** An offline payment (UPI, cash, bank transfer) an admin records by hand. */
 export const manualPaymentSchema = z.object({
   userId: z.string().uuid(),
-  amount: z.number().positive().max(1_000_000),
+  amount: z.number().int().positive().max(1_000_000),
   reference: z.string().trim().min(1).max(100),
   note: z.string().trim().max(500).optional(),
 });
