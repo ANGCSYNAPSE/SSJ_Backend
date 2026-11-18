@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import { env, isProduction } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
-import { passwordResetEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
+import { passwordResetEmail, securityNoticeEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
 
 /** Test mode only: every email "sent" during a test run. */
 export const mailOutbox = [];
@@ -52,5 +52,11 @@ export async function sendSignupOtpEmail({ to, fullName, code, minutes }) {
 
 export async function sendWelcomeEmail({ to, fullName, paid, balance, receipt }) {
   const mail = welcomeEmail({ fullName, paid, balance, receipt, siteUrl: env.siteUrl });
+  await deliver({ to, ...mail }, {});
+}
+
+/** A heads-up to the account's email that its email or password changed. Failure to send never blocks the change. */
+export async function sendSecurityNoticeEmail({ to, fullName, what, detail }) {
+  const mail = securityNoticeEmail({ fullName, what, detail });
   await deliver({ to, ...mail }, {});
 }

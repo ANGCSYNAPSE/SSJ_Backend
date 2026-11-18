@@ -109,3 +109,18 @@ export function passwordResetEmail({ fullName, resetUrl, minutes }) {
     }),
   };
 }
+
+/** Tells the owner of an account that its sign-in details just changed, so a change they did not make is noticed. */
+export function securityNoticeEmail({ fullName, what, detail }) {
+  return {
+    subject: `Your Shyam Jagat ${what} was changed`,
+    text: `Hi ${fullName},\n\nYour Shyam Jagat ${what} was just changed${detail ? ` (${detail})` : ""}.\n\nIf this was you, there is nothing to do. If it was not, contact the Shyam Jagat team straight away.\n\nJai Shri Shyam`,
+    html: layout({
+      preheader: `Your ${what} was changed`,
+      title: `Your ${what} was changed`,
+      bodyHtml: `
+        <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#595656;text-align:center;">Hi ${esc(fullName)}, your Shyam Jagat ${esc(what)} was just changed${detail ? ` (${esc(detail)})` : ""}.</p>
+        <p style="margin:0;padding:12px 14px;background:#fff7ea;border:1px solid #f0d9ad;border-radius:10px;font-size:13px;line-height:1.6;color:#6b4a1f;text-align:center;">If this was you, there is nothing to do. If it was not, contact the Shyam Jagat team straight away.</p>`,
+    }),
+  };
+}

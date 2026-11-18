@@ -10,7 +10,7 @@ const clip = (value, max) => (value ? String(value).slice(0, max) : null);
 /**
  * Refresh tokens. The browser holds the token (in an httpOnly cookie); the database holds only its
  * hash, so a leaked table cannot be used to sign in. The access token is a short-lived signed JWT
- * and is not stored. Every refresh swaps the token for a new one; using an old token again means it
+ * and is not stored. Every refresh swaps the token for a new one; using a swapped-out token again means it
  * was copied, so every session of that user is ended.
  */
 export const RefreshTokens = {
@@ -46,8 +46,14 @@ export const RefreshTokens = {
     const [row] = await sql(`SELECT * FROM refresh_tokens WHERE id = $1`, [payload.jti]);
     if (!row || row.token_hash !== hash(token)) return null;
     if (row.revoked_at) {
-      await this.revokeAllForUser(row.user_id);
-      return { reused: true };
+      // A token that was swapped for a newer one (replaced_by) and is shown again was copied: end every session.
+      // A token ended on purpose (logout, password change) is simply refused: it must not sign out the
+      // person's other devices, least of all the one that just changed the password.
+      if (row.replaced_by) {
+        await this.revokeAllForUser(row.user_id);
+        return { reused: true };
+      }
+      return null;
     }
     if (new Date(row.expires_at) < new Date()) return null;
 

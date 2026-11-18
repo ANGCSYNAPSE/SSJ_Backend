@@ -224,3 +224,31 @@ describe("refresh tokens are stored, hashed, in their own table", () => {
     assert.equal((await rowsOf(user.id)).length, 0);
   });
 });
+
+describe("a token that was ended on purpose does not take the person's other sessions with it", () => {
+  it("showing a logged-out token again is refused, but the other device stays signed in", async () => {
+    const user = await createUser(TAG);
+    const laptop = await login(user);
+    const phone = await login(user);
+    const laptopCookie = cookieFrom(laptop.setCookie);
+
+    await api("/auth/logout", { method: "POST", cookie: laptopCookie });
+    assert.equal((await api("/auth/refresh", { method: "POST", cookie: laptopCookie })).status, 401);
+    assert.equal((await api("/auth/refresh", { method: "POST", cookie: cookieFrom(phone.setCookie) })).status, 200, "the phone session must survive");
+  });
+
+  it("only a token that was swapped for a newer one counts as copied", async () => {
+    const user = await createUser(TAG);
+    const phone = await login(user);
+    const tablet = await login(user);
+    const phoneCookie = cookieFrom(phone.setCookie);
+
+    // the phone refreshes normally: its first token is now swapped out
+    const refreshed = await api("/auth/refresh", { method: "POST", cookie: phoneCookie });
+    assert.equal(refreshed.status, 200);
+
+    // someone replays the swapped-out token: refused, and every session of the user ends
+    assert.equal((await api("/auth/refresh", { method: "POST", cookie: phoneCookie })).status, 401);
+    assert.equal((await api("/auth/refresh", { method: "POST", cookie: cookieFrom(tablet.setCookie) })).status, 401);
+  });
+});

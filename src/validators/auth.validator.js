@@ -21,6 +21,9 @@ const password = z
     "Password must include at least one letter and one number.",
   );
 
+// Reused by the account-settings endpoints.
+export { email as emailField, mobile as mobileField, password as passwordField };
+
 export const signupSchema = z
   .object({
     fullName: z
