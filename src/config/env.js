@@ -71,6 +71,13 @@ export const env = {
     provider: process.env.SMS_PROVIDER,
   },
 
+  // How registration-fee payments are taken. "razorpay" (the default) uses the real Razorpay API.
+  // "mock" is for development only: the checkout is a dummy window that moves no money, so signups can be
+  // tested before the Razorpay keys exist. It must be switched on on purpose (PAYMENTS_MODE=mock).
+  payments: {
+    mode: process.env.PAYMENTS_MODE === "mock" ? "mock" : "razorpay",
+  },
+
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,

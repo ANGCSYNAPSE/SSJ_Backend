@@ -1,6 +1,8 @@
 import rateLimit from "express-rate-limit";
 
 const shared = {
+  // Tests make many deliberate bad requests in a row; they must not trip the limits.
+  skip: () => process.env.NODE_ENV === "test",
   standardHeaders: true,
   legacyHeaders: false,
   message: {

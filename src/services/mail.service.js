@@ -3,6 +3,9 @@ import { env, isProduction } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
 import { passwordResetEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
 
+/** Test mode only: every email "sent" during a test run. */
+export const mailOutbox = [];
+
 const transporter = env.smtp.host
   ? nodemailer.createTransport({
       host: env.smtp.host,
@@ -18,6 +21,11 @@ const transporter = env.smtp.host
  * for a code that never arrives is worse than an honest error.
  */
 async function deliver({ to, subject, text, html }, { log }) {
+  // Under test, mail is collected here instead of sent, so tests can read the codes and nothing real is ever emailed.
+  if (env.nodeEnv === "test") {
+    mailOutbox.push({ to, subject, text, html });
+    return;
+  }
   if (!transporter) {
     if (isProduction) throw ApiError.serviceUnavailable("Email is not available right now. Please try again later.");
     console.log(`[mail] SMTP not configured. To: ${to} | ${subject}\n${log ?? text}`);

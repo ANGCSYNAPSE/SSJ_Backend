@@ -7,6 +7,7 @@ import { signupFlowLimiter as authLimiter } from "../middleware/rateLimiter.js";
 import { signupSchema } from "../validators/auth.validator.js";
 import { SignupService } from "../services/signup.service.js";
 import { setRefreshCookie } from "../utils/tokens.js";
+import { RefreshTokens } from "../models/refreshToken.model.js";
 
 /**
  * Registration: details -> email code -> payment -> account. Mounted at /api/v1/auth/signup.
@@ -32,8 +33,9 @@ const payVerifySchema = z.object({
 });
 
 /** Ends the flow: the account exists, so hand back the session exactly like a login. */
-function sendAccount(res, result) {
-  setRefreshCookie(res, result.refreshToken);
+async function sendAccount(req, res, result) {
+  // The refresh token is stored (hashed) in refresh_tokens; the access token is a signed 1-day token.
+  setRefreshCookie(res, await RefreshTokens.issue(result.user, { remember: true, ip: req.ip, userAgent: req.headers["user-agent"] }));
   sendSuccess(res, {
     status: 201,
     message: "Account created successfully.",
@@ -51,6 +53,12 @@ function sendAccount(res, result) {
  *     responses:
  *       200: { description: Code sent }
  *       409: { description: Email or mobile already has an account }
+ * /api/v1/auth/signup/resume:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Where an unfinished signup stands (stage otp | details | pay | complete) with the saved details
+ *     responses:
+ *       200: { description: Current state }
  * /api/v1/auth/signup/resend:
  *   post:
  *     tags: [Auth]
@@ -102,6 +110,15 @@ signupFlowRouter.post(
 );
 
 signupFlowRouter.post(
+  "/resume",
+  authLimiter,
+  validate(resendSchema),
+  asyncHandler(async (req, res) => {
+    sendSuccess(res, { message: "Where you left off.", data: await SignupService.resume(req.validated.pendingId) });
+  }),
+);
+
+signupFlowRouter.post(
   "/resend",
   authLimiter,
   validate(resendSchema),
@@ -146,7 +163,8 @@ signupFlowRouter.post(
   validate(payVerifySchema),
   asyncHandler(async (req, res) => {
     const { pendingId: id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.validated;
-    sendAccount(
+    await sendAccount(
+      req,
       res,
       await SignupService.verifyPayment(id, { orderId: razorpay_order_id, paymentId: razorpay_payment_id, signature: razorpay_signature }),
     );
@@ -158,6 +176,6 @@ signupFlowRouter.post(
   authLimiter,
   validate(resendSchema),
   asyncHandler(async (req, res) => {
-    sendAccount(res, await SignupService.complete(req.validated.pendingId));
+    await sendAccount(req, res, await SignupService.complete(req.validated.pendingId));
   }),
 );

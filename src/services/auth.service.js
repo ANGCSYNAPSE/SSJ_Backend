@@ -6,9 +6,10 @@ import { env } from "../config/env.js";
 import { UserModel, toUser } from "../models/user.model.js";
 import { listProfilesForUser, missingFieldsFor, profileRepository } from "../models/profile.model.js";
 import { RegistrationPaymentModel } from "../models/registrationPayment.model.js";
-import { feeState } from "../config/plans.js";
+import { feeState, getRegistrationFee } from "../config/plans.js";
 import { ApiError } from "../utils/ApiError.js";
-import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
+import { signAccessToken } from "../utils/tokens.js";
+import { RefreshTokens } from "../models/refreshToken.model.js";
 
 /**
  * Business logic for authentication. Controllers stay thin: they parse input
@@ -23,9 +24,9 @@ export const AuthService = {
   /** Adds the categories (artist, temple, ...) the user has registered for. */
   async withProfiles(user) {
     if (!user) return user;
-    const [profiles, { paid }] = await Promise.all([listProfilesForUser(user.id), RegistrationPaymentModel.paidSummary(user.id)]);
+    const [profiles, { paid }, fee] = await Promise.all([listProfilesForUser(user.id), RegistrationPaymentModel.paidSummary(user.id), getRegistrationFee()]);
     // Admins never pay a fee.
-    return { ...user, profiles, registrationFee: user.role === "admin" ? "paid" : feeState(paid) };
+    return { ...user, profiles, registrationFee: user.role === "admin" ? "paid" : feeState(paid, fee) };
   },
 
   /**
@@ -124,7 +125,6 @@ export const AuthService = {
     return {
       user: await this.withProfiles(user),
       accessToken: signAccessToken(user),
-      refreshToken: signRefreshToken(user),
     };
   },
 
@@ -158,7 +158,6 @@ export const AuthService = {
     return {
       user: await this.withProfiles(user),
       accessToken: signAccessToken(user),
-      refreshToken: signRefreshToken(user),
     };
   },
 
@@ -199,9 +198,11 @@ export const AuthService = {
     const passwordHash = await bcrypt.hash(password, env.bcryptRounds);
     await UserModel.setPassword(row.user_id, passwordHash);
     await sql`UPDATE password_resets SET used_at = NOW() WHERE user_id = ${row.user_id} AND used_at IS NULL`;
+    // A new password ends every signed-in session of that account.
+    await RefreshTokens.revokeAllForUser(row.user_id);
   },
 
-  async refresh(userId, { remember = true } = {}) {
+  async refresh(userId) {
     const user = await UserModel.findById(userId);
     if (!user || user.isBlocked) {
       throw ApiError.unauthorized("Session is no longer valid.");
@@ -210,8 +211,6 @@ export const AuthService = {
     return {
       user: await this.withProfiles(user),
       accessToken: signAccessToken(user),
-      // A new refresh token each time: the session slides, so someone who keeps using the site stays signed in.
-      refreshToken: signRefreshToken(user, { remember }),
     };
   },
 };

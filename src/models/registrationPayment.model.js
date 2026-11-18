@@ -1,10 +1,8 @@
 import { sql } from "../config/database.js";
 import { createSqlRepository, rowToEntity } from "../db/sqlRepository.js";
-import { REGISTRATION_FEE } from "../config/plans.js";
+import { getRegistrationFee } from "../config/plans.js";
 
 const repo = createSqlRepository("registration_payments");
-
-const TOTAL = REGISTRATION_FEE.total;
 
 export const RegistrationPaymentModel = {
   ...repo,
@@ -89,6 +87,7 @@ export const RegistrationPaymentModel = {
    * balance. `state` filters to "pending" (nothing paid) or "partial" (part paid).
    */
   async listOwingUsers({ q, state, limit = 25, offset = 0 }) {
+    const { total: TOTAL } = await getRegistrationFee();
     const params = [TOTAL];
     let search = "";
     if (q) {
@@ -134,6 +133,8 @@ export const RegistrationPaymentModel = {
 
   /** Money and head-counts for the admin dashboard. */
   async summary() {
+    const fee = await getRegistrationFee();
+    const TOTAL = fee.total;
     const [counts] = await sql(
       `SELECT COUNT(*) FILTER (WHERE d.paid >= $1)::int AS fully_paid,
               COUNT(*) FILTER (WHERE d.paid > 0 AND d.paid < $1)::int AS partial,
@@ -161,7 +162,7 @@ export const RegistrationPaymentModel = {
     );
     const expected = counts.members * TOTAL;
     return {
-      fee: { total: TOTAL, minimum: REGISTRATION_FEE.minimum },
+      fee: { total: TOTAL, minimum: fee.minimum },
       collected: {
         amount: collected.total,
         payments: collected.payments,

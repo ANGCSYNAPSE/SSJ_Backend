@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import express, { Router } from "express";
-import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
@@ -8,15 +7,26 @@ import { requireAuth } from "../middleware/auth.js";
 import { validate, validateQuery } from "../middleware/validate.js";
 import { UserModel } from "../models/user.model.js";
 import { RegistrationPaymentModel } from "../models/registrationPayment.model.js";
-import { PAYMENT_APP, PAYMENT_PURPOSE, REGISTRATION_FEE, allowedPayment, feeState } from "../config/plans.js";
 import {
+  DEFAULT_REGISTRATION_FEE,
+  PAYMENT_APP,
+  PAYMENT_PURPOSE,
+  allowedPayment,
+  feeState,
+  getRegistrationFee,
+  registrationFeeHistory,
+  saveRegistrationFee,
+} from "../config/plans.js";
+import { env, isProduction } from "../config/env.js";
+import {
+  feeSettingsSchema,
   adminPaymentsQuerySchema,
   adminPendingQuerySchema,
   manualPaymentSchema,
   registrationOrderSchema,
   verifyRegistrationPaymentSchema,
 } from "../validators/payments.validator.js";
-import { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature } from "../services/razorpay.service.js";
+import { createRazorpayOrder, isMockPayments, isMockSwitchLeftOn, verifyPaymentSignature, verifyWebhookSignature } from "../services/razorpay.service.js";
 
 /** The member's own registration fee. Mounted at /api/v1/payments. */
 export const paymentsRouter = Router();
@@ -47,11 +57,12 @@ const money = (row) => ({
  */
 export async function feeStatusFor(userId) {
   const { paid, lastPaidAt, lastReceipt } = await RegistrationPaymentModel.paidSummary(userId);
-  const next = allowedPayment(paid);
+  const rules = await getRegistrationFee();
+  const next = allowedPayment(paid, rules);
   return {
-    status: feeState(paid),
-    total: REGISTRATION_FEE.total,
-    minimum: REGISTRATION_FEE.minimum,
+    status: feeState(paid, rules),
+    total: rules.total,
+    minimum: rules.minimum,
     paid,
     balance: next.balance,
     nextMin: next.min,
@@ -95,9 +106,12 @@ export async function feeStatusFor(userId) {
  *       200: { description: "{ fee }" }
  *       400: { description: Signature mismatch }
  */
-paymentsRouter.get("/fee", (_req, res) => {
-  sendSuccess(res, { data: REGISTRATION_FEE });
-});
+paymentsRouter.get(
+  "/fee",
+  asyncHandler(async (_req, res) => {
+    sendSuccess(res, { data: await getRegistrationFee() });
+  }),
+);
 
 paymentsRouter.get(
   "/me",
@@ -118,7 +132,7 @@ paymentsRouter.post(
     if (!user) throw ApiError.notFound("Account not found.");
 
     const { paid } = await RegistrationPaymentModel.paidSummary(user.id);
-    const next = allowedPayment(paid);
+    const next = allowedPayment(paid, await getRegistrationFee());
     if (next.balance <= 0) throw ApiError.conflict("The registration fee is already paid in full.");
     if (amount > next.max) throw ApiError.badRequest(`Only ₹${next.max} is still due.`);
     if (amount < next.min) {
@@ -134,6 +148,7 @@ paymentsRouter.post(
     // and are what the webhook checks before it touches anything.
     const receipt = `SJ-REG-${user.id.slice(0, 8)}-${Date.now()}`;
     const order = await createRazorpayOrder({
+      allowMock: true,
       amountInPaise: amount * 100,
       receipt,
       notes: { app: PAYMENT_APP, purpose: PAYMENT_PURPOSE, user_id: user.id, kind, name: user.fullName },
@@ -156,7 +171,8 @@ paymentsRouter.post(
         orderId: order.id,
         amount: order.amount,
         currency: order.currency,
-        keyId: env.razorpay.keyId,
+        keyId: order.mock ? "mock" : env.razorpay.keyId,
+        mock: Boolean(order.mock),
         kind,
         label: kind === "full" ? "Registration fee" : "Registration fee (part payment)",
         prefill: { name: user.fullName, email: user.email, contact: user.mobile },
@@ -176,7 +192,7 @@ paymentsRouter.post(
     const row = await RegistrationPaymentModel.findByOrderId(orderId);
     if (!row || row.userId !== req.user.id) throw ApiError.notFound("Payment not found.");
 
-    if (!verifyPaymentSignature({ orderId, paymentId, signature })) {
+    if (!verifyPaymentSignature({ orderId, paymentId, signature, allowMock: true })) {
       await RegistrationPaymentModel.markFailed(orderId, paymentId, "Signature mismatch");
       throw ApiError.badRequest("Payment could not be verified.");
     }
@@ -289,7 +305,7 @@ adminPaymentsRouter.post(
     const user = await UserModel.findById(userId);
     if (!user) throw ApiError.notFound("Account not found.");
     const { paid } = await RegistrationPaymentModel.paidSummary(userId);
-    const { balance } = allowedPayment(paid);
+    const { balance } = allowedPayment(paid, await getRegistrationFee());
     if (balance <= 0) throw ApiError.conflict("This person has already paid in full.");
     if (amount > balance) throw ApiError.badRequest(`Only ₹${balance} is still due.`);
 
@@ -307,5 +323,113 @@ adminPaymentsRouter.post(
       paidAt: new Date().toISOString(),
     });
     sendSuccess(res, { status: 201, message: "Payment recorded.", data: money(row) });
+  }),
+);
+
+/* ───────── Admin: the fee and the Razorpay connection ───────── */
+
+/**
+ * @openapi
+ * /api/v1/admin/payments/settings:
+ *   get:
+ *     tags: [Payments]
+ *     summary: The current registration fee and who last changed it (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: "{ fee: { total, minimum }, defaults, updatedAt, updatedBy }" }
+ *   put:
+ *     tags: [Payments]
+ *     summary: Change the registration fee (admin). Takes effect straight away.
+ *     description: "Send { total, minimum } in whole rupees. People who have already paid keep what they paid; a lower total can make part-paid members fully paid."
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: The new fee }
+ *       400: { description: Invalid amounts }
+ * /api/v1/admin/payments/diagnostics:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Is Razorpay connected? Keys set, test or live mode, and a harmless call to Razorpay (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: "{ keys, mode, warnings[], apiCheck }" }
+ */
+adminPaymentsRouter.get(
+  "/settings",
+  asyncHandler(async (_req, res) => {
+    const [fee, history] = await Promise.all([getRegistrationFee(), registrationFeeHistory()]);
+    sendSuccess(res, { data: { fee, defaults: DEFAULT_REGISTRATION_FEE, updatedAt: history?.updatedAt ?? null, updatedBy: history?.updatedBy ?? null } });
+  }),
+);
+
+adminPaymentsRouter.put(
+  "/settings",
+  validate(feeSettingsSchema),
+  asyncHandler(async (req, res) => {
+    const fee = await saveRegistrationFee(req.validated, req.user.id);
+    sendSuccess(res, { message: "Registration fee updated.", data: { fee } });
+  }),
+);
+
+adminPaymentsRouter.get(
+  "/diagnostics",
+  asyncHandler(async (_req, res) => {
+    const { keyId, keySecret, webhookSecret, apiBase } = env.razorpay;
+    const mode = !keyId ? "unknown" : keyId.startsWith("rzp_live_") ? "live" : keyId.startsWith("rzp_test_") ? "test" : "unknown";
+    const warnings = [];
+    if (isMockPayments()) {
+      warnings.push(
+        "MOCK PAYMENTS are on (PAYMENTS_MODE=mock): the registration checkout is a dummy and moves no money, so anyone can complete a payment. Switch it off before real members sign up.",
+      );
+    }
+    if (isMockSwitchLeftOn()) {
+      warnings.push("PAYMENTS_MODE=mock is still set, but the Razorpay keys are present, so real Razorpay is being used. You can delete PAYMENTS_MODE.");
+    }
+    if (!keyId || !keySecret) warnings.push("The Razorpay key id or secret is not set, so payments cannot start.");
+    if (mode === "unknown" && keyId) warnings.push("The key id does not start with rzp_test_ or rzp_live_. Check it was copied completely.");
+    if (mode === "live" && !isProduction) warnings.push("Live keys are in use outside production: real money would move.");
+    if (mode === "test" && isProduction) warnings.push("Test keys are in use in production: customers cannot really pay.");
+    if (!webhookSecret || webhookSecret === "YOUR_WEBHOOK_SECRET" || webhookSecret.length < 16) {
+      warnings.push("The webhook secret is missing, a placeholder, or too short. Use a long random string, the same one set on the Razorpay webhook.");
+    }
+
+    // One harmless read call: it proves the key pair is accepted, and creates nothing.
+    let apiCheck = { ok: false, status: null, message: "Not checked: the keys are missing." };
+    if (keyId && keySecret) {
+      try {
+        const response = await fetch(`${apiBase}/payments?count=1`, {
+          headers: { Authorization: "Basic " + Buffer.from(`${keyId}:${keySecret}`).toString("base64") },
+          signal: AbortSignal.timeout(20_000),
+        });
+        const body = await response.json().catch(() => null);
+        apiCheck = {
+          ok: response.ok,
+          status: response.status,
+          message: response.ok ? "Razorpay accepted the keys." : (body?.error?.description ?? "Razorpay refused the request."),
+        };
+      } catch (error) {
+        apiCheck = { ok: false, status: null, message: `Could not reach Razorpay: ${error.message}` };
+      }
+    }
+    if (apiCheck.status === 401) warnings.push("Razorpay refused the key id and secret. They do not match, or the key was regenerated.");
+
+    sendSuccess(res, {
+      data: {
+        // Never the secret itself: only whether it is there and how long it is.
+        keys: {
+          keyId: keyId ? `${keyId.slice(0, 12)}…` : null,
+          keyIdSet: Boolean(keyId),
+          keySecretSet: Boolean(keySecret),
+          keySecretLength: keySecret?.length ?? 0,
+          webhookSecretSet: Boolean(webhookSecret),
+          webhookSecretLength: webhookSecret?.length ?? 0,
+        },
+        mode,
+        paymentsMode: isMockPayments() ? "mock" : "razorpay",
+        environment: env.nodeEnv,
+        webhookUrl: "/api/v1/payments/webhook",
+        warnings,
+        apiCheck,
+      },
+    });
   }),
 );

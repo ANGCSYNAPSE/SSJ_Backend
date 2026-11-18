@@ -39,3 +39,11 @@ export const manualPaymentSchema = z.object({
   reference: z.string().trim().min(1).max(100),
   note: z.string().trim().max(500).optional(),
 });
+
+/** The registration fee an admin sets: whole rupees, and the minimum first payment can never exceed the total. */
+export const feeSettingsSchema = z
+  .object({
+    total: z.number({ message: "Enter the total fee in rupees." }).int("Use a whole number of rupees.").min(100, "The fee must be at least ₹100.").max(100000, "The fee cannot be more than ₹1,00,000."),
+    minimum: z.number({ message: "Enter the minimum first payment in rupees." }).int("Use a whole number of rupees.").min(1, "The minimum must be at least ₹1."),
+  })
+  .refine((fee) => fee.minimum <= fee.total, { path: ["minimum"], message: "The minimum first payment cannot be more than the total fee." });
