@@ -23,21 +23,7 @@ process.env.PAYMENTS_MODE = process.env.PAYMENTS_MODE_TEST === "mock-with-keys" 
 process.env.BCRYPT_ROUNDS = "4";
 
 import crypto from "node:crypto";
-import fs from "node:fs";
 
-// If a test process dies for a reason the runner cannot show ("test failed"), the reason is written here.
-const crashLog = new URL("./.crash.log", import.meta.url);
-for (const event of ["uncaughtException", "unhandledRejection"]) {
-  process.on(event, (error) => {
-    try {
-      fs.appendFileSync(crashLog, `[${new Date().toISOString()}] ${event} in ${process.argv[1]}: ${error?.stack ?? error}
-`);
-    } catch {
-      /* nothing more can be done */
-    }
-    if (event === "uncaughtException") throw error;
-  });
-}
 import { once } from "node:events";
 import bcrypt from "bcryptjs";
 
