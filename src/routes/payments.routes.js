@@ -247,10 +247,10 @@ registrationWebhookRouter.post(
     const isOurs = notes.app === PAYMENT_APP && notes.purpose === PAYMENT_PURPOSE;
     if (isOurs && orderId) {
       if (event.event === "payment.captured" || event.event === "order.paid") {
-        // Only an order we created, for exactly the amount we asked for.
+        // Only an order we created, paid for at least the amount we asked for (a customer-borne Razorpay fee makes it a little more).
         const row = await RegistrationPaymentModel.findByOrderId(orderId);
         const paidPaise = Number(payment?.amount ?? order?.amount_paid);
-        if (row && paidPaise === Math.round(Number(row.amountInRupees) * 100)) {
+        if (row && paidPaise >= Math.round(Number(row.amountInRupees) * 100)) {
           await RegistrationPaymentModel.markPaid(orderId, payment?.id);
         }
       } else if (event.event === "payment.failed") {
@@ -457,7 +457,7 @@ adminPaymentsRouter.get(
  * /api/v1/admin/payments/{id}/reconcile:
  *   post:
  *     tags: [Payments]
- *     summary: Settle a payment stuck as "not finished" by asking Razorpay what happened to its order (admin)
+ *     summary: Settle a payment stuck as "not finished" (or wrongly failed) by asking Razorpay what happened to its order (admin)
  *     description: "If Razorpay holds a captured payment for the order and the amount matches, the payment is marked paid. If it holds none, the attempt is marked failed (abandoned). If Razorpay cannot be reached, nothing changes (502)."
  *     security: [{ bearerAuth: [] }]
  *     responses:
@@ -470,7 +470,7 @@ adminPaymentsRouter.post(
   asyncHandler(async (req, res) => {
     const row = await RegistrationPaymentModel.findById(req.params.id);
     if (!row) throw ApiError.notFound("Payment not found.");
-    if (row.status !== "created" || row.source !== "razorpay") {
+    if (!(["created", "failed"].includes(row.status)) || row.source !== "razorpay") {
       return sendSuccess(res, { message: "Nothing to reconcile.", data: money(row) });
     }
 
@@ -478,12 +478,14 @@ adminPaymentsRouter.post(
     if (payments === null) throw new ApiError(502, "Razorpay could not be reached. Please try again in a moment.");
 
     const expected = Math.round(Number(row.amountInRupees) * 100);
-    const captured = payments.find((p) => (p.status === "captured" || p.status === "authorized") && Number(p.amount) === expected);
+    const captured = payments.find((p) => (p.status === "captured" || p.status === "authorized") && Number(p.amount) >= expected);
     const updated = captured
       ? await RegistrationPaymentModel.markPaid(row.razorpayOrderId, captured.id)
-      : await RegistrationPaymentModel.markFailed(row.razorpayOrderId, null, "Abandoned: no payment was made for this order");
+      : row.status === "created"
+        ? await RegistrationPaymentModel.markFailed(row.razorpayOrderId, null, "Abandoned: no payment was made for this order")
+        : row;
     sendSuccess(res, {
-      message: captured ? "Found a captured payment. Marked as paid." : "No payment was made. Marked as abandoned.",
+      message: captured ? "Found a captured payment. Marked as paid." : row.status === "created" ? "No payment was made. Marked as abandoned." : "Razorpay holds no captured payment for this order. Left as failed.",
       data: money(updated ?? row),
     });
   }),

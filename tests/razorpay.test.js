@@ -296,3 +296,74 @@ describe("admin: reconcile a stuck payment", () => {
     assert.equal((await reconcile(await adminToken(), "11111111-1111-4111-8111-111111111111")).status, 404);
   });
 });
+
+describe("a Razorpay fee paid by the customer makes the payment a little MORE than the order", () => {
+  const FEE_PAISE = 1298; // ₹12.98 on top of ₹1,100, as in the real dashboard
+
+  it("a member's payment that covers the order plus the fee is counted for the fee amount, not the extra", async () => {
+    const token = await tokenOf(await createUser(TAG));
+    const c = await memberCheckout(token, 1100);
+    registerPayment(c.paymentId, { orderId: c.orderId, amount: c.paise + FEE_PAISE, status: "captured" });
+    const res = await api("/payments/registration/verify", { token, body: c.body });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.fee.paid, 1100, "the fee counts the order amount, not Razorpay's extra");
+    assert.equal(res.body.data.fee.status, "paid");
+    assert.equal((await rowOf(c.orderId)).status, "paid");
+  });
+
+  it("a signup payment that includes the fee creates the account", async () => {
+    const { pendingId, who } = await readyToPay(TAG);
+    const c = await signupCheckout(pendingId, 1100);
+    registerPayment(c.paymentId, { orderId: c.orderId, amount: c.paise + FEE_PAISE });
+    const res = await verifySignup(pendingId, c);
+    assert.equal(res.status, 201);
+    assert.equal(res.body.data.user.email, who.email);
+    assert.equal(res.body.data.user.registrationFee, "paid");
+  });
+
+  it("the webhook accepts it too", async () => {
+    const token = await tokenOf(await createUser(TAG));
+    const c = await memberCheckout(token, 1100);
+    const raw = JSON.stringify({
+      event: "payment.captured",
+      payload: { payment: { entity: { id: c.paymentId, order_id: c.orderId, amount: c.paise + FEE_PAISE, notes: { app: "shyam_jagat", purpose: "registration_fee" } } } },
+    });
+    await api("/payments/webhook", { method: "POST", body: raw, headers: { "content-type": "application/json", "x-razorpay-signature": signWebhook(raw) } });
+    assert.equal((await rowOf(c.orderId)).status, "paid");
+  });
+
+  it("paying LESS than the order is still refused", async () => {
+    const token = await tokenOf(await createUser(TAG));
+    const c = await memberCheckout(token, 1100);
+    registerPayment(c.paymentId, { orderId: c.orderId, amount: c.paise - 1 });
+    assert.equal((await api("/payments/registration/verify", { token, body: c.body })).status, 400);
+    assert.equal((await rowOf(c.orderId)).status, "failed");
+  });
+
+  it("an admin can recover a genuine payment that was wrongly marked failed", async () => {
+    const user = await createUser(TAG);
+    const token = await tokenOf(user);
+    const c = await memberCheckout(token, 1100);
+    await sql(`UPDATE registration_payments SET status = 'failed', failure_reason = 'Payment did not match the order' WHERE razorpay_order_id = $1`, [c.orderId]);
+    registerOrderPayments(c.orderId, [{ id: "pay_recovered", status: "captured", amount: c.paise + FEE_PAISE }]);
+    const row = await rowOf(c.orderId);
+    const admin = await tokenOf(await createUser(TAG, { role: "admin" }));
+
+    const res = await api(`/admin/payments/${row.id}/reconcile`, { method: "POST", token: admin });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.status, "paid");
+    assert.equal((await api("/payments/me", { token })).body.data.fee.status, "paid");
+  });
+
+  it("a failed payment with nothing captured at Razorpay stays failed", async () => {
+    const token = await tokenOf(await createUser(TAG));
+    const c = await memberCheckout(token, 501);
+    await sql(`UPDATE registration_payments SET status = 'failed' WHERE razorpay_order_id = $1`, [c.orderId]);
+    registerOrderPayments(c.orderId, []);
+    const row = await rowOf(c.orderId);
+    const admin = await tokenOf(await createUser(TAG, { role: "admin" }));
+    const res = await api(`/admin/payments/${row.id}/reconcile`, { method: "POST", token: admin });
+    assert.equal(res.body.data.status, "failed");
+    assert.match(res.body.message, /left as failed/i);
+  });
+});

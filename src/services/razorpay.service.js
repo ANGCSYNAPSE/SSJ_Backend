@@ -78,7 +78,7 @@ export async function createRazorpayOrder({ amountInPaise, currency = "INR", rec
  * Asks Razorpay whether a payment really went through. A valid signature proves the order and payment ids
  * belong together; only the payment's own status proves money moved. Returns:
  *  - "captured":     paid (status captured, or authorised with auto-capture on), for this order and amount;
- *  - "mismatch":     Razorpay knows the payment but for a different order or amount: refuse it;
+ *  - "mismatch":     Razorpay knows the payment but for a different order, or for less than the order: refuse it;
  *  - "not_captured": the payment exists but did not succeed (failed, created, refunded...);
  *  - "unreachable":  Razorpay could not be asked (or does not know the payment yet): leave it pending, the
  *                    webhook or a reconcile will settle it.
@@ -86,7 +86,9 @@ export async function createRazorpayOrder({ amountInPaise, currency = "INR", rec
 export async function confirmPayment({ orderId, paymentId, amountInPaise }) {
   const { ok, payload } = await call(`/payments/${encodeURIComponent(paymentId)}`);
   if (!ok || !payload) return { state: "unreachable", status: null };
-  if (payload.order_id !== orderId || Number(payload.amount) !== amountInPaise) return { state: "mismatch", status: payload.status };
+  // The payment must be for this order and cover it. It may be MORE than the order: when the Razorpay account has the
+  // customer bear the fee, the payment amount includes Razorpay's fee on top of the order amount (₹1,100 + ₹12.98).
+  if (payload.order_id !== orderId || Number(payload.amount) < amountInPaise) return { state: "mismatch", status: payload.status };
   if (payload.status === "captured" || payload.status === "authorized") return { state: "captured", status: payload.status };
   return { state: "not_captured", status: payload.status };
 }
