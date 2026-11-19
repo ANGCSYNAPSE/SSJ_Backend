@@ -111,10 +111,16 @@ export const me = asyncHandler(async (req, res) => {
 });
 
 export const forgotPassword = asyncHandler(async (req, res) => {
-  await AuthService.requestPasswordReset(req.validated.email);
+  const { resendAfterSeconds } = await AuthService.requestPasswordReset(req.validated.email);
   return sendSuccess(res, {
-    message: "If an account exists for that email, a reset link has been sent.",
+    message: "If an account exists for that email, we have sent a 6-digit code.",
+    data: { resendAfterSeconds },
   });
+});
+
+export const verifyResetCode = asyncHandler(async (req, res) => {
+  const data = await AuthService.verifyPasswordResetCode(req.validated);
+  return sendSuccess(res, { message: "Code verified. Choose a new password.", data });
 });
 
 export const resetPassword = asyncHandler(async (req, res) => {

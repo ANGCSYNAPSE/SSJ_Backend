@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import { env, isProduction } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
-import { passwordResetEmail, securityNoticeEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
+import { passwordResetCodeEmail, passwordResetEmail, securityNoticeEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
 
 /** Test mode only: every email "sent" during a test run. */
 export const mailOutbox = [];
@@ -43,6 +43,11 @@ async function deliver({ to, subject, text, html }, { log }) {
 export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
   const mail = passwordResetEmail({ fullName, resetUrl, minutes: env.passwordResetTtlMinutes });
   await deliver({ to, ...mail }, { log: `Reset link: ${resetUrl}` });
+}
+
+export async function sendPasswordResetCodeEmail({ to, fullName, code, minutes }) {
+  const mail = passwordResetCodeEmail({ fullName, code, minutes });
+  await deliver({ to, ...mail }, { log: `Password reset code: ${code}` });
 }
 
 export async function sendSignupOtpEmail({ to, fullName, code, minutes }) {

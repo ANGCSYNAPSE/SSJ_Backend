@@ -77,6 +77,12 @@ export const loginSchema = z.object({
 
 export const forgotPasswordSchema = z.object({ email });
 
+/** The 6-digit code emailed by forgot-password. */
+export const verifyResetCodeSchema = z.object({
+  email,
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code."),
+});
+
 /** Signup asks this on its first step, before the person fills in the rest of a long form. */
 export const checkAvailabilitySchema = z
   .object({ email: email.optional(), mobile: mobile.optional() })

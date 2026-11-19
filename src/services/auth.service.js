@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { sql } from "../config/database.js";
-import { sendPasswordResetEmail } from "./mail.service.js";
+import { sendPasswordResetCodeEmail, sendSecurityNoticeEmail } from "./mail.service.js";
 import { env } from "../config/env.js";
 import { UserModel, toUser } from "../models/user.model.js";
 import { listProfilesForUser, missingFieldsFor, profileRepository } from "../models/profile.model.js";
@@ -19,6 +19,13 @@ const hashToken = (token) => createHash("sha256").update(token).digest("hex");
 
 const USER_COLUMNS =
   "id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at";
+
+const RESET_CODE_MINUTES = 15;
+const RESET_TOKEN_MINUTES = 15;
+const RESET_MAX_ATTEMPTS = 5;
+const RESET_RESEND_SECONDS = 45;
+const RESET_MAX_PER_HOUR = 5;
+const resetCodeHash = (userId, code) => createHmac("sha256", env.jwt.refreshSecret).update(`pwreset:${userId}:${code}`).digest("hex");
 
 export const AuthService = {
   /** Adds the categories (artist, temple, ...) the user has registered for. */
@@ -165,25 +172,67 @@ export const AuthService = {
    * Always resolves quietly, whether or not the email is registered, so the
    * endpoint can't be used to discover which emails have accounts.
    */
+  /**
+   * Forgot password, step 1: emails a 6-digit code. Always looks the same from outside (no hint whether the
+   * email has an account). One code every 45 seconds and five an hour per account; extra asks are quietly ignored.
+   */
   async requestPasswordReset(email) {
+    const answer = { resendAfterSeconds: RESET_RESEND_SECONDS };
     const user = await UserModel.findByEmail(email);
-    if (!user || user.isBlocked) return;
+    if (!user || user.isBlocked) return answer;
+
+    const [row] = await sql`
+      SELECT send_count, EXTRACT(EPOCH FROM (NOW() - sent_at)) AS since_sent,
+             (NOW() - window_started_at) < INTERVAL '1 hour' AS in_window
+      FROM password_reset_codes WHERE user_id = ${user.id}`;
+    if (row && Number(row.since_sent) < RESET_RESEND_SECONDS) return answer;
+    if (row && row.in_window && row.send_count >= RESET_MAX_PER_HOUR) return answer;
+
+    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    try {
+      await sendPasswordResetCodeEmail({ to: user.email, fullName: user.fullName, code, minutes: RESET_CODE_MINUTES });
+    } catch (error) {
+      // Saying "could not send" would reveal that the account exists; the problem goes to the log instead.
+      console.error("[mail] password reset code not sent:", error.message);
+      return answer;
+    }
+    const keepWindow = Boolean(row && row.in_window);
+    await sql`
+      INSERT INTO password_reset_codes (user_id, code_hash, expires_at)
+      VALUES (${user.id}, ${resetCodeHash(user.id, code)}, NOW() + (${String(RESET_CODE_MINUTES)} || ' minutes')::interval)
+      ON CONFLICT (user_id) DO UPDATE SET
+        code_hash = EXCLUDED.code_hash, attempts = 0, expires_at = EXCLUDED.expires_at, sent_at = NOW(),
+        send_count = CASE WHEN ${keepWindow}::boolean THEN password_reset_codes.send_count + 1 ELSE 1 END,
+        window_started_at = CASE WHEN ${keepWindow}::boolean THEN password_reset_codes.window_started_at ELSE NOW() END`;
+    return answer;
+  },
+
+  /**
+   * Forgot password, step 2: checks the emailed code and hands back a one-time reset token for step 3.
+   * Every failure says the same thing, so nothing reveals whether the email has an account.
+   */
+  async verifyPasswordResetCode({ email, code }) {
+    const refused = ApiError.badRequest("That code is not right or has expired. Please check it, or ask for a new one.");
+    const user = await UserModel.findByEmail(email);
+    if (!user || user.isBlocked) throw refused;
+
+    const [row] = await sql`SELECT code_hash, attempts, expires_at FROM password_reset_codes WHERE user_id = ${user.id}`;
+    if (!row || new Date(row.expires_at) < new Date() || row.attempts >= RESET_MAX_ATTEMPTS) throw refused;
+
+    const expected = Buffer.from(resetCodeHash(user.id, code), "hex");
+    const actual = Buffer.from(row.code_hash, "hex");
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+      await sql`UPDATE password_reset_codes SET attempts = attempts + 1 WHERE user_id = ${user.id}`;
+      throw refused;
+    }
 
     const token = randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + env.passwordResetTtlMinutes * 60_000);
-
-    // Only the newest link should work.
+    await sql`DELETE FROM password_reset_codes WHERE user_id = ${user.id}`;
     await sql`UPDATE password_resets SET used_at = NOW() WHERE user_id = ${user.id} AND used_at IS NULL`;
     await sql`
       INSERT INTO password_resets (user_id, token_hash, expires_at)
-      VALUES (${user.id}, ${hashToken(token)}, ${expiresAt.toISOString()})
-    `;
-
-    await sendPasswordResetEmail({
-      to: user.email,
-      fullName: user.fullName,
-      resetUrl: `${env.adminUrl}/reset-password?token=${token}`,
-    });
+      VALUES (${user.id}, ${hashToken(token)}, NOW() + (${String(RESET_TOKEN_MINUTES)} || ' minutes')::interval)`;
+    return { resetToken: token, minutes: RESET_TOKEN_MINUTES };
   },
 
   async resetPassword({ token, password }) {
@@ -200,6 +249,14 @@ export const AuthService = {
     await sql`UPDATE password_resets SET used_at = NOW() WHERE user_id = ${row.user_id} AND used_at IS NULL`;
     // A new password ends every signed-in session of that account.
     await RefreshTokens.revokeAllForUser(row.user_id);
+
+    // The owner is told, so a reset they did not ask for is noticed. A failed email must not undo the reset.
+    const [owner] = await sql`SELECT email, full_name FROM users WHERE id = ${row.user_id}`;
+    if (owner) {
+      sendSecurityNoticeEmail({ to: owner.email, fullName: owner.full_name, what: "password", detail: "it was reset from the forgot-password link" }).catch((error) =>
+        console.error("[mail] security notice failed:", error.message),
+      );
+    }
   },
 
   async refresh(userId) {

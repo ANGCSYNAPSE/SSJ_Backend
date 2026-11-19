@@ -7,6 +7,7 @@ import {
   signupSchema,
   loginSchema,
   forgotPasswordSchema,
+  verifyResetCodeSchema,
   resetPasswordSchema,
   checkAvailabilitySchema,
 } from "../validators/auth.validator.js";
@@ -248,8 +249,8 @@ router.get("/me", requireAuth, authController.me);
  * /api/v1/auth/forgot-password:
  *   post:
  *     tags: [Auth]
- *     summary: Email a password reset link
- *     description: Always returns 200 so account existence is not revealed.
+ *     summary: Email a 6-digit password reset code
+ *     description: Always returns 200 so account existence is not revealed. One code every 45 seconds, five an hour; valid for 15 minutes.
  *     requestBody:
  *       required: true
  *       content:
@@ -263,10 +264,27 @@ router.get("/me", requireAuth, authController.me);
  *       200: { description: Request accepted }
  *       400:
  *         $ref: '#/components/responses/ValidationError'
+ * /api/v1/auth/forgot-password/verify:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Check the emailed code; returns a one-time reset token for the new-password step
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, code]
+ *             properties:
+ *               email: { type: string, format: email }
+ *               code: { type: string, example: '123456' }
+ *     responses:
+ *       200: { description: "{ resetToken, minutes }" }
+ *       400: { description: Wrong, expired or locked code (always the same message) }
  * /api/v1/auth/reset-password:
  *   post:
  *     tags: [Auth]
- *     summary: Set a new password using an emailed reset token
+ *     summary: Set a new password using the reset token from the verify step
  *     requestBody:
  *       required: true
  *       content:
@@ -283,6 +301,7 @@ router.get("/me", requireAuth, authController.me);
  *       400: { description: Invalid/expired token or validation error }
  */
 router.post("/forgot-password", authLimiter, validate(forgotPasswordSchema), authController.forgotPassword);
+router.post("/forgot-password/verify", authLimiter, validate(verifyResetCodeSchema), authController.verifyResetCode);
 router.post("/reset-password", authLimiter, validate(resetPasswordSchema), authController.resetPassword);
 
 export default router;

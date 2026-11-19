@@ -43,6 +43,34 @@ function layout({ preheader, title, bodyHtml }) {
 }
 
 /** The 6-digit code that proves someone owns the email they signed up with. */
+/** The code that lets someone choose a new password (forgot password). */
+export function passwordResetCodeEmail({ fullName, code, minutes }) {
+  return {
+    subject: `${code} is your Shyam Jagat password reset code`,
+    text: `Hi ${fullName},
+
+Your Shyam Jagat password reset code is ${code}.
+It works for ${minutes} minutes. Enter it on the forgot-password page to choose a new password.
+
+If you did not ask to reset your password, you can ignore this email: your password stays as it is. Never share this code with anyone.
+
+Jai Shri Shyam`,
+    html: layout({
+      preheader: `Your password reset code is ${code}`,
+      title: "Reset your password",
+      bodyHtml: `
+        <p style="margin:0 0 18px 0;font-size:15px;line-height:1.6;color:#595656;text-align:center;">Hi ${esc(fullName)}, enter this code on the forgot-password page to choose a new password.</p>
+        <table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto 18px auto;">
+          <tr><td align="center" style="background:#fff7ea;border:1px solid #f0d9ad;border-radius:12px;padding:16px 26px;">
+            <span style="display:block;white-space:nowrap;font-family:'SF Mono','Cascadia Mono',Consolas,'Courier New',monospace;font-size:34px;line-height:1;font-weight:bold;letter-spacing:7px;color:#6b1f1f;">${esc(code)}</span>
+          </td></tr>
+        </table>
+        <p style="margin:0 0 6px 0;font-size:14px;line-height:1.5;color:#595656;text-align:center;">This code expires in <b>${esc(minutes)} minutes</b>.</p>
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#8a8580;text-align:center;">Never share this code with anyone. If you did not ask for this, you can safely ignore this email: your password has not changed.</p>`,
+    }),
+  };
+}
+
 export function signupOtpEmail({ fullName, code, minutes }) {
   return {
     subject: `${code} is your Shyam Jagat verification code`,
