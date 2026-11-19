@@ -7,6 +7,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { validate, validateQuery } from "../middleware/validate.js";
 import { UserModel } from "../models/user.model.js";
 import { RegistrationPaymentModel } from "../models/registrationPayment.model.js";
+import { NotificationModel } from "../models/notification.model.js";
 import {
   DEFAULT_REGISTRATION_FEE,
   PAYMENT_APP,
@@ -43,6 +44,19 @@ export const adminPaymentsRouter = Router();
 
 /** Razorpay's callback for registration payments (raw body, mounted before the JSON parser). */
 export const registrationWebhookRouter = Router();
+
+/** "Payment received" in the person's bell, once per order (the browser and the webhook may both report it). */
+async function notifyPaid(row) {
+  if (!row?.userId) return;
+  await NotificationModel.notify(row.userId, {
+    kind: "success",
+    category: "payment",
+    title: "Payment received",
+    message: `We received ₹${Number(row.amountInRupees).toLocaleString("en-IN")} towards your registration fee. Thank you!`,
+    link: "/profile",
+    dedupeKey: `payment:${row.razorpayOrderId}`,
+  });
+}
 
 const money = (row) => ({
   id: row.id,
@@ -218,7 +232,7 @@ paymentsRouter.post(
       });
     }
 
-    await RegistrationPaymentModel.markPaid(orderId, paymentId);
+    await notifyPaid(await RegistrationPaymentModel.markPaid(orderId, paymentId));
     sendSuccess(res, { message: "Payment received. Thank you!", data: { fee: await feeStatusFor(req.user.id), confirming: false } });
   }),
 );
@@ -251,7 +265,7 @@ registrationWebhookRouter.post(
         const row = await RegistrationPaymentModel.findByOrderId(orderId);
         const paidPaise = Number(payment?.amount ?? order?.amount_paid);
         if (row && paidPaise >= Math.round(Number(row.amountInRupees) * 100)) {
-          await RegistrationPaymentModel.markPaid(orderId, payment?.id);
+          await notifyPaid(await RegistrationPaymentModel.markPaid(orderId, payment?.id));
         }
       } else if (event.event === "payment.failed") {
         await RegistrationPaymentModel.markFailed(orderId, payment?.id, payment?.error_description);
@@ -348,6 +362,7 @@ adminPaymentsRouter.post(
       recordedBy: req.user.id,
       paidAt: new Date().toISOString(),
     });
+    await notifyPaid(row);
     sendSuccess(res, { status: 201, message: "Payment recorded.", data: money(row) });
   }),
 );
@@ -480,7 +495,11 @@ adminPaymentsRouter.post(
     const expected = Math.round(Number(row.amountInRupees) * 100);
     const captured = payments.find((p) => (p.status === "captured" || p.status === "authorized") && Number(p.amount) >= expected);
     const updated = captured
-      ? await RegistrationPaymentModel.markPaid(row.razorpayOrderId, captured.id)
+      ? (async () => {
+          const paid = await RegistrationPaymentModel.markPaid(row.razorpayOrderId, captured.id);
+          await notifyPaid(paid);
+          return paid;
+        })()
       : row.status === "created"
         ? await RegistrationPaymentModel.markFailed(row.razorpayOrderId, null, "Abandoned: no payment was made for this order")
         : row;

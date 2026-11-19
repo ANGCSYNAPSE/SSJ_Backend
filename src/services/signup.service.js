@@ -6,6 +6,7 @@ import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
 import { UserModel } from "../models/user.model.js";
 import { RegistrationPaymentModel } from "../models/registrationPayment.model.js";
+import { NotificationModel } from "../models/notification.model.js";
 import { PAYMENT_APP, PAYMENT_PURPOSE, allowedPayment, feeState, getRegistrationFee } from "../config/plans.js";
 import { PROFILE_SCHEMAS } from "../validators/profiles.validator.js";
 import { AuthService } from "./auth.service.js";
@@ -418,6 +419,16 @@ export const SignupService = {
       result.user.id,
     ]);
     await sql(`DELETE FROM otp_codes WHERE pending_signup_id = $1`, [pending.id]);
+
+    // A first message in the bell: a welcome, and the receipt for what was paid.
+    await NotificationModel.notify(result.user.id, {
+      kind: "success",
+      category: "system",
+      title: "Welcome to Shyam Jagat",
+      message: `Your account is ready and your payment of ₹${fee.paid.toLocaleString("en-IN")} was received. Jai Shri Shyam!`,
+      link: "/profile",
+      dedupeKey: "welcome",
+    });
 
     const user = await AuthService.withProfiles(await UserModel.findById(result.user.id));
     const { receipt } = await RegistrationPaymentModel.paidSummary(user.id);

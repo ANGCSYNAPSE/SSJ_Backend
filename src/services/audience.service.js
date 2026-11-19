@@ -32,15 +32,14 @@ async function build(audience) {
 
   if (segment.fee) {
     const { total } = await getRegistrationFee();
-    const t = add(total);
     const paid = "(SELECT COALESCE(SUM(p.amount_in_rupees), 0) FROM registration_payments p WHERE p.user_id = u.id AND p.status = 'paid')";
-    where.push(segment.fee === "paid" ? `${paid} >= ${t}` : segment.fee === "partial" ? `${paid} > 0 AND ${paid} < ${t}` : `${paid} = 0`);
+    where.push(segment.fee === "paid" ? `${paid} >= ${add(total)}` : segment.fee === "partial" ? `${paid} > 0 AND ${paid} < ${add(total)}` : `${paid} = 0`);
   }
   if (segment.categories?.length) {
-    where.push(`EXISTS (SELECT 1 FROM all_registrations r WHERE r.user_id = u.id AND r.type = ANY(${add(segment.categories)}::text[]))`);
+    where.push(`EXISTS (SELECT 1 FROM all_registrations r WHERE r.user_id = u.id AND r.type::text = ANY(${add(segment.categories)}::text[]))`);
   }
   if (segment.profile) {
-    const typeFilter = segment.categories?.length ? ` AND r.type = ANY(${add(segment.categories)}::text[])` : "";
+    const typeFilter = segment.categories?.length ? ` AND r.type::text = ANY(${add(segment.categories)}::text[])` : "";
     where.push(
       segment.profile === "incomplete"
         ? `EXISTS (SELECT 1 FROM all_registrations r WHERE r.user_id = u.id AND r.is_complete = FALSE${typeFilter})`

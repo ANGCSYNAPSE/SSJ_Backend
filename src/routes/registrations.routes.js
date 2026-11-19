@@ -5,6 +5,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validateQuery } from "../middleware/validate.js";
+import { NotificationModel } from "../models/notification.model.js";
 import { AuthService } from "../services/auth.service.js";
 import {
   findProfileByUser,
@@ -268,6 +269,18 @@ for (const [action, status] of Object.entries(STATUS_ACTIONS)) {
         adminNote: typeof req.body?.adminNote === "string" ? req.body.adminNote : undefined,
       });
       if (!updated) throw ApiError.notFound();
+
+      // Tell the person what the team decided, in their bell.
+      const label = { artist: "artist", dancer: "dancer", musician: "musician", temple: "temple", dharamshala: "dharamshala", mandal: "mandal" }[req.params.type] ?? "";
+      const note = typeof req.body?.adminNote === "string" && req.body.adminNote.trim() ? ` Note from the team: ${req.body.adminNote.trim().slice(0, 200)}` : "";
+      const text = {
+        approved: { kind: "success", title: "Registration approved", message: `Your ${label} registration has been approved. Thank you for joining the Shyam Jagat family!${note}` },
+        rejected: { kind: "warning", title: "Registration not approved", message: `Your ${label} registration could not be approved yet.${note || " Please check your details."}` },
+        blocked: { kind: "warning", title: "Registration on hold", message: `Your ${label} registration has been put on hold.${note}` },
+      }[status];
+      if (updated.userId && text) {
+        await NotificationModel.notify(updated.userId, { ...text, category: "registration", link: "/profile" });
+      }
       sendSuccess(res, { message: "Updated.", data: updated });
     }),
   );
