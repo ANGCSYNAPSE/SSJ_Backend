@@ -26,7 +26,14 @@ import {
   registrationOrderSchema,
   verifyRegistrationPaymentSchema,
 } from "../validators/payments.validator.js";
-import { createRazorpayOrder, isMockPayments, isMockSwitchLeftOn, verifyPaymentSignature, verifyWebhookSignature } from "../services/razorpay.service.js";
+import {
+  confirmPayment,
+  createRazorpayOrder,
+  fetchOrderPayments,
+  razorpayConfigured,
+  verifyPaymentSignature,
+  verifyWebhookSignature,
+} from "../services/razorpay.service.js";
 
 /** The member's own registration fee. Mounted at /api/v1/payments. */
 export const paymentsRouter = Router();
@@ -148,7 +155,6 @@ paymentsRouter.post(
     // and are what the webhook checks before it touches anything.
     const receipt = `SJ-REG-${user.id.slice(0, 8)}-${Date.now()}`;
     const order = await createRazorpayOrder({
-      allowMock: true,
       amountInPaise: amount * 100,
       receipt,
       notes: { app: PAYMENT_APP, purpose: PAYMENT_PURPOSE, user_id: user.id, kind, name: user.fullName },
@@ -171,8 +177,7 @@ paymentsRouter.post(
         orderId: order.id,
         amount: order.amount,
         currency: order.currency,
-        keyId: order.mock ? "mock" : env.razorpay.keyId,
-        mock: Boolean(order.mock),
+        keyId: env.razorpay.keyId,
         kind,
         label: kind === "full" ? "Registration fee" : "Registration fee (part payment)",
         prefill: { name: user.fullName, email: user.email, contact: user.mobile },
@@ -192,13 +197,29 @@ paymentsRouter.post(
     const row = await RegistrationPaymentModel.findByOrderId(orderId);
     if (!row || row.userId !== req.user.id) throw ApiError.notFound("Payment not found.");
 
-    if (!verifyPaymentSignature({ orderId, paymentId, signature, allowMock: true })) {
+    if (!verifyPaymentSignature({ orderId, paymentId, signature })) {
       await RegistrationPaymentModel.markFailed(orderId, paymentId, "Signature mismatch");
       throw ApiError.badRequest("Payment could not be verified.");
     }
 
+    // A valid signature proves the ids belong together; only Razorpay's own payment status proves the money moved.
+    const check = await confirmPayment({ orderId, paymentId, amountInPaise: Math.round(Number(row.amountInRupees) * 100) });
+    if (check.state === "mismatch") {
+      await RegistrationPaymentModel.markFailed(orderId, paymentId, "Payment did not match the order");
+      throw ApiError.badRequest("Payment could not be verified.");
+    }
+    if (check.state !== "captured") {
+      // Not confirmed yet (or Razorpay could not be asked): leave it pending. The webhook, or the admin's
+      // Reconcile button, finishes it, so a paid member is never lost and an unpaid one is never counted.
+      return sendSuccess(res, {
+        status: 202,
+        message: "Your payment is being confirmed. It will appear on your profile shortly.",
+        data: { fee: await feeStatusFor(req.user.id), confirming: true },
+      });
+    }
+
     await RegistrationPaymentModel.markPaid(orderId, paymentId);
-    sendSuccess(res, { message: "Payment received. Thank you!", data: { fee: await feeStatusFor(req.user.id) } });
+    sendSuccess(res, { message: "Payment received. Thank you!", data: { fee: await feeStatusFor(req.user.id), confirming: false } });
   }),
 );
 
@@ -226,7 +247,12 @@ registrationWebhookRouter.post(
     const isOurs = notes.app === PAYMENT_APP && notes.purpose === PAYMENT_PURPOSE;
     if (isOurs && orderId) {
       if (event.event === "payment.captured" || event.event === "order.paid") {
-        await RegistrationPaymentModel.markPaid(orderId, payment?.id);
+        // Only an order we created, for exactly the amount we asked for.
+        const row = await RegistrationPaymentModel.findByOrderId(orderId);
+        const paidPaise = Number(payment?.amount ?? order?.amount_paid);
+        if (row && paidPaise === Math.round(Number(row.amountInRupees) * 100)) {
+          await RegistrationPaymentModel.markPaid(orderId, payment?.id);
+        }
       } else if (event.event === "payment.failed") {
         await RegistrationPaymentModel.markFailed(orderId, payment?.id, payment?.error_description);
       }
@@ -376,14 +402,6 @@ adminPaymentsRouter.get(
     const { keyId, keySecret, webhookSecret, apiBase } = env.razorpay;
     const mode = !keyId ? "unknown" : keyId.startsWith("rzp_live_") ? "live" : keyId.startsWith("rzp_test_") ? "test" : "unknown";
     const warnings = [];
-    if (isMockPayments()) {
-      warnings.push(
-        "MOCK PAYMENTS are on (PAYMENTS_MODE=mock): the registration checkout is a dummy and moves no money, so anyone can complete a payment. Switch it off before real members sign up.",
-      );
-    }
-    if (isMockSwitchLeftOn()) {
-      warnings.push("PAYMENTS_MODE=mock is still set, but the Razorpay keys are present, so real Razorpay is being used. You can delete PAYMENTS_MODE.");
-    }
     if (!keyId || !keySecret) warnings.push("The Razorpay key id or secret is not set, so payments cannot start.");
     if (mode === "unknown" && keyId) warnings.push("The key id does not start with rzp_test_ or rzp_live_. Check it was copied completely.");
     if (mode === "live" && !isProduction) warnings.push("Live keys are in use outside production: real money would move.");
@@ -394,7 +412,7 @@ adminPaymentsRouter.get(
 
     // One harmless read call: it proves the key pair is accepted, and creates nothing.
     let apiCheck = { ok: false, status: null, message: "Not checked: the keys are missing." };
-    if (keyId && keySecret) {
+    if (razorpayConfigured()) {
       try {
         const response = await fetch(`${apiBase}/payments?count=1`, {
           headers: { Authorization: "Basic " + Buffer.from(`${keyId}:${keySecret}`).toString("base64") },
@@ -424,12 +442,49 @@ adminPaymentsRouter.get(
           webhookSecretLength: webhookSecret?.length ?? 0,
         },
         mode,
-        paymentsMode: isMockPayments() ? "mock" : "razorpay",
+        maxOrderAmount: env.razorpay.maxOrderAmount,
         environment: env.nodeEnv,
         webhookUrl: "/api/v1/payments/webhook",
         warnings,
         apiCheck,
       },
+    });
+  }),
+);
+
+/**
+ * @openapi
+ * /api/v1/admin/payments/{id}/reconcile:
+ *   post:
+ *     tags: [Payments]
+ *     summary: Settle a payment stuck as "not finished" by asking Razorpay what happened to its order (admin)
+ *     description: "If Razorpay holds a captured payment for the order and the amount matches, the payment is marked paid. If it holds none, the attempt is marked failed (abandoned). If Razorpay cannot be reached, nothing changes (502)."
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: The payment after reconciling }
+ *       404: { description: Payment not found }
+ *       502: { description: Razorpay could not be reached }
+ */
+adminPaymentsRouter.post(
+  "/:id/reconcile",
+  asyncHandler(async (req, res) => {
+    const row = await RegistrationPaymentModel.findById(req.params.id);
+    if (!row) throw ApiError.notFound("Payment not found.");
+    if (row.status !== "created" || row.source !== "razorpay") {
+      return sendSuccess(res, { message: "Nothing to reconcile.", data: money(row) });
+    }
+
+    const payments = await fetchOrderPayments(row.razorpayOrderId);
+    if (payments === null) throw new ApiError(502, "Razorpay could not be reached. Please try again in a moment.");
+
+    const expected = Math.round(Number(row.amountInRupees) * 100);
+    const captured = payments.find((p) => (p.status === "captured" || p.status === "authorized") && Number(p.amount) === expected);
+    const updated = captured
+      ? await RegistrationPaymentModel.markPaid(row.razorpayOrderId, captured.id)
+      : await RegistrationPaymentModel.markFailed(row.razorpayOrderId, null, "Abandoned: no payment was made for this order");
+    sendSuccess(res, {
+      message: captured ? "Found a captured payment. Marked as paid." : "No payment was made. Marked as abandoned.",
+      data: money(updated ?? row),
     });
   }),
 );

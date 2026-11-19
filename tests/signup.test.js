@@ -485,32 +485,3 @@ describe("coming back later: signing in resumes the unfinished signup", () => {
     assert.equal(res.body.data.emailVerified, true, "the same pending signup is revived");
   });
 });
-
-describe("real payment mode never accepts the dummy checkout", () => {
-  it("a dummy signature is refused for a real order", async () => {
-    const { pendingId, who } = await readyToPay(TAG);
-    const order = await api("/auth/signup/pay/order", { body: { pendingId, amount: 501 } });
-    assert.equal(order.body.data.mock, false);
-    assert.ok(!order.body.data.orderId.startsWith("order_mock_"));
-    const res = await api("/auth/signup/pay/verify", {
-      body: { pendingId, razorpay_order_id: order.body.data.orderId, razorpay_payment_id: "pay_mock_1", razorpay_signature: "mock_signature" },
-    });
-    assert.equal(res.status, 400);
-    assert.equal(await userCount(who.email), 0);
-  });
-
-  it("a dummy order id with the dummy signature is refused too", async () => {
-    const { pendingId, who } = await readyToPay(TAG);
-    await sql(
-      `INSERT INTO registration_payments (pending_signup_id, plan, amount_in_rupees, status, receipt, razorpay_order_id)
-       VALUES ($1, 'part', 501, 'created', 'SJ-REG-forged', $2)`,
-      [pendingId, `order_mock_forged${Date.now()}`],
-    );
-    const [{ razorpay_order_id: orderId }] = await sql(`SELECT razorpay_order_id FROM registration_payments WHERE pending_signup_id = $1`, [pendingId]);
-    const res = await api("/auth/signup/pay/verify", {
-      body: { pendingId, razorpay_order_id: orderId, razorpay_payment_id: "pay_mock_2", razorpay_signature: "mock_signature" },
-    });
-    assert.equal(res.status, 400);
-    assert.equal(await userCount(who.email), 0);
-  });
-});

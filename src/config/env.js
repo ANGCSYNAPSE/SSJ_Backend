@@ -71,18 +71,14 @@ export const env = {
     provider: process.env.SMS_PROVIDER,
   },
 
-  // How registration-fee payments are taken. "razorpay" (the default) uses the real Razorpay API.
-  // "mock" is for development only: the checkout is a dummy window that moves no money, so signups can be
-  // tested before the Razorpay keys exist. It must be switched on on purpose (PAYMENTS_MODE=mock).
-  payments: {
-    mode: process.env.PAYMENTS_MODE === "mock" ? "mock" : "razorpay",
-  },
-
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
     apiBase: process.env.RAZORPAY_API_BASE ?? "https://api.razorpay.com/v1",
+    // The largest single payment the Razorpay account allows, in rupees. A bigger order is refused with a plain
+    // message before Razorpay is called (it would answer with a raw 400).
+    maxOrderAmount: Number(process.env.RAZORPAY_MAX_ORDER_AMOUNT ?? 500000),
   },
 };
 

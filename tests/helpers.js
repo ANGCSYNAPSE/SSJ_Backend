@@ -9,16 +9,12 @@
 process.env.NODE_ENV = "test";
 process.env.SMTP_HOST = "";
 process.env.SMS_PROVIDER = "";
-// The dummy checkout only exists while there are no Razorpay keys, so the mock tests run without them.
-const noKeys = process.env.PAYMENTS_MODE_TEST === "mock";
-process.env.RAZORPAY_KEY_ID = noKeys ? "" : "rzp_test_autotest";
-process.env.RAZORPAY_KEY_SECRET = noKeys ? "" : "autotest_key_secret";
+process.env.RAZORPAY_KEY_ID = "rzp_test_autotest";
+process.env.RAZORPAY_KEY_SECRET = "autotest_key_secret";
 process.env.RAZORPAY_WEBHOOK_SECRET = "autotest_webhook_secret";
 process.env.JWT_ACCESS_TTL = "1d";
 process.env.JWT_REFRESH_TTL = "7d";
 process.env.ALLOW_DIRECT_SIGNUP = "false";
-// Real Razorpay rules by default; the mock-mode tests set PAYMENTS_MODE_TEST=mock before importing this file.
-process.env.PAYMENTS_MODE = process.env.PAYMENTS_MODE_TEST === "mock-with-keys" ? "mock" : (process.env.PAYMENTS_MODE_TEST ?? "razorpay");
 // A cheap password hash keeps the suite fast; the production default (12) is untouched.
 process.env.BCRYPT_ROUNDS = "4";
 
@@ -46,27 +42,65 @@ let base;
 let orderSeq = 0;
 const realFetch = globalThis.fetch;
 
+/* ---------- a stand-in for Razorpay ---------- */
+// Payments Razorpay "knows": paymentId -> { orderId, amount (paise), status }. A test registers the payment its
+// checkout window would have made; a payment that is not registered is one Razorpay has never heard of.
+const knownPayments = new Map();
+// Payments held for an order, for the reconcile call: orderId -> [{ id, amount, status }]
+const orderPayments = new Map();
+let razorpayDown = false;
+let ordersFail = false;
+
+export function registerPayment(paymentId, { orderId, amount, status = "captured" }) {
+  knownPayments.set(paymentId, { id: paymentId, order_id: orderId, amount, status });
+}
+export function registerOrderPayments(orderId, items) {
+  orderPayments.set(orderId, items);
+}
+/** Makes every Razorpay call fail as if the network were down. */
+export function setRazorpayDown(value) {
+  razorpayDown = value;
+}
+/** Makes "create order" answer with Razorpay's raw 400, like an amount above the account's limit. */
+export function setOrdersFail(value) {
+  ordersFail = value;
+}
+
+const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
 export async function startServer() {
   server = app.listen(0);
   await once(server, "listening");
   base = `http://127.0.0.1:${server.address().port}/api/v1`;
 
-  // Razorpay's "create order" is answered here; everything else (including calls to our own server) is real.
+  // Razorpay's API is answered here; everything else (including calls to our own server) is real.
   globalThis.fetch = async (url, init) => {
-    if (String(url).includes("api.razorpay.com") && String(url).endsWith("/orders")) {
+    const u = String(url);
+    if (!u.includes("api.razorpay.com")) return realFetch(url, init);
+    if (razorpayDown) throw new TypeError("fetch failed");
+
+    if (u.endsWith("/orders")) {
+      if (ordersFail) return json({ error: { code: "BAD_REQUEST_ERROR", description: "Amount exceeds maximum amount allowed." } }, 400);
       const body = JSON.parse(init.body);
       orderSeq += 1;
-      return new Response(JSON.stringify({ id: `order_autotest_${Date.now()}_${orderSeq}`, amount: body.amount, currency: body.currency ?? "INR" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return json({ id: `order_autotest_${Date.now()}_${orderSeq}`, amount: body.amount, currency: body.currency ?? "INR" });
     }
-    return realFetch(url, init);
+    const one = /\/payments\/([^/?]+)$/.exec(u);
+    if (one) {
+      const payment = knownPayments.get(decodeURIComponent(one[1]));
+      return payment ? json(payment) : json({ error: { description: "The id provided does not exist" } }, 400);
+    }
+    const forOrder = /\/orders\/([^/]+)\/payments$/.exec(u);
+    if (forOrder) return json({ items: orderPayments.get(decodeURIComponent(forOrder[1])) ?? [] });
+    if (u.includes("/payments?")) return json({ items: [] });
+    return json({ error: { description: "not stubbed" } }, 404);
   };
 }
 
 export async function stopServer() {
   globalThis.fetch = realFetch;
+  razorpayDown = false;
+  ordersFail = false;
   await new Promise((resolve) => server.close(resolve));
 }
 
@@ -159,6 +193,7 @@ export async function payPending(pendingId, amount) {
   if (order.status !== 201) return { order };
   const { orderId } = order.body.data;
   const paymentId = `pay_autotest_${Date.now()}`;
+  registerPayment(paymentId, { orderId, amount: order.body.data.amount });
   const done = await api("/auth/signup/pay/verify", {
     body: { pendingId, razorpay_order_id: orderId, razorpay_payment_id: paymentId, razorpay_signature: hmac(KEY_SECRET, `${orderId}|${paymentId}`) },
   });

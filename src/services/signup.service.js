@@ -11,7 +11,7 @@ import { PROFILE_SCHEMAS } from "../validators/profiles.validator.js";
 import { AuthService } from "./auth.service.js";
 import { sendSignupOtpEmail, sendWelcomeEmail } from "./mail.service.js";
 import { sendSms, signupOtpText, smsConfigured } from "./sms.service.js";
-import { createRazorpayOrder, verifyPaymentSignature } from "./razorpay.service.js";
+import { confirmPayment, createRazorpayOrder, verifyPaymentSignature } from "./razorpay.service.js";
 
 /**
  * Signup is: details (step 1) -> email code -> the rest of the details (step 2) -> payment of at least
@@ -336,7 +336,6 @@ export const SignupService = {
     const kind = amount === fee.balance ? "full" : "part";
     const receipt = `SJ-REG-P${pending.id.slice(0, 7)}-${Date.now()}`;
     const order = await createRazorpayOrder({
-      allowMock: true,
       amountInPaise: amount * 100,
       receipt,
       notes: { app: PAYMENT_APP, purpose: PAYMENT_PURPOSE, pending_signup_id: pending.id, kind, name: pending.full_name },
@@ -354,8 +353,7 @@ export const SignupService = {
       orderId: order.id,
       amount: order.amount,
       currency: order.currency,
-      keyId: order.mock ? "mock" : env.razorpay.keyId,
-      mock: Boolean(order.mock),
+      keyId: env.razorpay.keyId,
       kind,
       label: kind === "full" ? "Registration fee" : "Registration fee (part payment)",
       prefill: { name: pending.full_name, email: pending.email, contact: pending.mobile },
@@ -367,9 +365,22 @@ export const SignupService = {
     const pending = await loadPending(pendingId);
     const row = await RegistrationPaymentModel.findByOrderId(orderId);
     if (!row || row.pendingSignupId !== pending.id) throw ApiError.notFound("Payment not found.");
-    if (!verifyPaymentSignature({ orderId, paymentId, signature, allowMock: true })) {
+    if (!verifyPaymentSignature({ orderId, paymentId, signature })) {
       await RegistrationPaymentModel.markFailed(orderId, paymentId, "Signature mismatch");
       throw ApiError.badRequest("Payment could not be verified.");
+    }
+    // A valid signature is not proof of payment: ask Razorpay whether the money really moved.
+    const check = await confirmPayment({ orderId, paymentId, amountInPaise: Math.round(Number(row.amountInRupees) * 100) });
+    if (check.state === "mismatch") {
+      await RegistrationPaymentModel.markFailed(orderId, paymentId, "Payment did not match the order");
+      throw ApiError.badRequest("Payment could not be verified.");
+    }
+    if (check.state !== "captured") {
+      // The account is created only for confirmed money. The webhook (or a reconcile) settles the payment, and
+      // signing in with the same email and password then finishes the registration without paying again.
+      throw ApiError.conflict(
+        "Your payment is being confirmed by Razorpay. Please wait a minute, then sign in with your email and password to finish your registration. You will not be charged twice.",
+      );
     }
     await RegistrationPaymentModel.markPaid(orderId, paymentId);
     return this.complete(pendingId);

@@ -4,6 +4,7 @@ import {
   api,
   cleanup,
   createUser,
+  registerPayment,
   login,
   signPayment,
   signWebhook,
@@ -28,6 +29,7 @@ async function payAsMember(token, amount) {
   if (order.status !== 201) return { order };
   const { orderId } = order.body.data;
   const paymentId = `pay_autotest_${Date.now()}`;
+  registerPayment(paymentId, { orderId, amount: order.body.data.amount });
   const verify = await api("/payments/registration/verify", {
     token,
     body: { razorpay_order_id: orderId, razorpay_payment_id: paymentId, razorpay_signature: signPayment(orderId, paymentId) },
@@ -155,7 +157,7 @@ describe("the Razorpay webhook", () => {
     const token = await tokenOf(await createUser(TAG));
     const order = await api("/payments/registration/order", { token, body: { amount: 501 } });
     const orderId = order.body.data.orderId;
-    const res = await send({ event: "payment.captured", payload: { payment: { entity: { id: "pay_wh1", order_id: orderId, notes: ours } } } });
+    const res = await send({ event: "payment.captured", payload: { payment: { entity: { id: "pay_wh1", order_id: orderId, amount: 50_100, notes: ours } } } });
     assert.equal(res.status, 200);
     assert.equal((await feeOf(token)).paid, 501);
   });
@@ -163,7 +165,7 @@ describe("the Razorpay webhook", () => {
   it("a payment tagged for another app is ignored", async () => {
     const token = await tokenOf(await createUser(TAG));
     const order = await api("/payments/registration/order", { token, body: { amount: 501 } });
-    await send({ event: "payment.captured", payload: { payment: { entity: { id: "pay_wh2", order_id: order.body.data.orderId, notes: { app: "other_app" } } } } });
+    await send({ event: "payment.captured", payload: { payment: { entity: { id: "pay_wh2", order_id: order.body.data.orderId, amount: 50_100, notes: { app: "other_app" } } } } });
     assert.equal((await feeOf(token)).paid, 0);
   });
 
@@ -176,7 +178,7 @@ describe("the Razorpay webhook", () => {
     assert.equal(failed.status, "failed");
     assert.equal(failed.failure_reason, "card declined");
 
-    await send({ event: "payment.captured", payload: { payment: { entity: { id: "pay_wh4", order_id: orderId, notes: ours } } } });
+    await send({ event: "payment.captured", payload: { payment: { entity: { id: "pay_wh4", order_id: orderId, amount: 50_100, notes: ours } } } });
     await send({ event: "payment.failed", payload: { payment: { entity: { id: "pay_wh5", order_id: orderId, notes: ours } } } });
     const [still] = await sql(`SELECT status FROM registration_payments WHERE razorpay_order_id = $1`, [orderId]);
     assert.equal(still.status, "paid");

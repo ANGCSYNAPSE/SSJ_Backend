@@ -1,12 +1,16 @@
 /**
- * Server-only Razorpay client. keySecret/webhookSecret never leave this
- * module — only the order id/amount/currency/key id (all safe to expose)
- * are returned to the client.
+ * Server-only Razorpay client. keySecret/webhookSecret never leave this module: only the order
+ * id/amount/currency/key id (all safe to expose) are returned to the client.
+ *
+ * Plain HTTPS calls, no SDK. Amounts are in paise (rupees x 100). Every non-200 answer is logged with its
+ * HTTP code and Razorpay's error (never a secret); callers get a friendly sentence, never raw JSON.
  */
 import crypto from "crypto";
-import { randomBytes } from "crypto";
 import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
+
+const CREATE_TIMEOUT_MS = 30_000;
+const FETCH_TIMEOUT_MS = 20_000;
 
 function requireSecret(name) {
   const value = env.razorpay[name];
@@ -14,56 +18,84 @@ function requireSecret(name) {
   return value;
 }
 
+export const razorpayConfigured = () => Boolean(env.razorpay.keyId && env.razorpay.keySecret);
+
 function authHeader() {
   return "Basic " + Buffer.from(`${requireSecret("keyId")}:${requireSecret("keySecret")}`).toString("base64");
 }
 
-/** The dummy checkout's identifiers. Real Razorpay ids never start like this. */
-export const MOCK_ORDER_PREFIX = "order_mock_";
-export const MOCK_SIGNATURE = "mock_signature";
+/** One Razorpay call. Never throws: returns { ok, status, payload } (status null when Razorpay could not be reached). */
+async function call(path, { method = "GET", body, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+  try {
+    const res = await fetch(`${env.razorpay.apiBase}${path}`, {
+      method,
+      headers: { Authorization: authHeader(), ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      console.error(`[razorpay] ${method} ${path} -> ${res.status}`, JSON.stringify(payload?.error ?? payload));
+    }
+    return { ok: res.ok, status: res.status, payload };
+  } catch (error) {
+    console.error(`[razorpay] ${method} ${path} -> could not reach Razorpay: ${error.message}`);
+    return { ok: false, status: null, payload: null };
+  }
+}
 
 /**
- * True when the development "mock" checkout is in use: PAYMENTS_MODE=mock AND no complete Razorpay key
- * pair. The moment RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are both set, the dummy checkout switches
- * itself off and the real (test or live) Razorpay is used, even if PAYMENTS_MODE=mock is still there.
+ * Creates an order. `amountInPaise` must be a positive whole number; the server decides it, never the
+ * browser. Amounts above RAZORPAY_MAX_ORDER_AMOUNT are refused here with a plain message, because Razorpay
+ * would otherwise answer with a raw 400.
  */
-export const isMockPayments = () => env.payments.mode === "mock" && !(env.razorpay.keyId && env.razorpay.keySecret);
-
-/** PAYMENTS_MODE=mock is still set although real keys exist: harmless (the keys win), but worth removing. */
-export const isMockSwitchLeftOn = () => env.payments.mode === "mock" && Boolean(env.razorpay.keyId && env.razorpay.keySecret);
-
-/**
- * Creates an order. `amountInPaise` must be a positive integer. With `allowMock` (only the registration
- * fee passes it) and PAYMENTS_MODE=mock, no call is made: a dummy order comes back and the site shows a
- * dummy checkout. Without the keys, real mode refuses politely instead of failing deep inside.
- */
-export async function createRazorpayOrder({ amountInPaise, currency = "INR", receipt, notes, allowMock = false }) {
+export async function createRazorpayOrder({ amountInPaise, currency = "INR", receipt, notes }) {
   if (!Number.isInteger(amountInPaise) || amountInPaise <= 0) {
     throw new Error("amountInPaise must be a positive integer");
   }
-  if (allowMock && isMockPayments()) {
-    return { id: `${MOCK_ORDER_PREFIX}${randomBytes(8).toString("hex")}`, amount: amountInPaise, currency, mock: true };
+  const maxRupees = env.razorpay.maxOrderAmount;
+  if (amountInPaise > maxRupees * 100) {
+    throw ApiError.badRequest(`The largest single payment allowed is ₹${maxRupees.toLocaleString("en-IN")}.`);
   }
-  if (!env.razorpay.keyId || !env.razorpay.keySecret) {
+  if (!razorpayConfigured()) {
     console.error("[razorpay] RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set, so no order can be created.");
     throw ApiError.serviceUnavailable("Online payments are not set up yet. Please try again later.");
   }
 
-  const res = await fetch(`${env.razorpay.apiBase}/orders`, {
+  const { ok, payload } = await call("/orders", {
     method: "POST",
-    headers: {
-      Authorization: authHeader(),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ amount: amountInPaise, currency, receipt, notes }),
+    timeoutMs: CREATE_TIMEOUT_MS,
+    // payment_capture: the money is taken as soon as the payment is authorised, no manual capture step.
+    body: { amount: amountInPaise, currency, receipt: String(receipt).slice(0, 40), payment_capture: 1, notes },
   });
-
-  const payload = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message = payload?.error?.description ?? "Failed to create Razorpay order";
-    throw new Error(message);
+  if (!ok || !payload?.id) {
+    throw ApiError.serviceUnavailable("We could not start the payment right now. Please try again in a moment.");
   }
   return payload;
+}
+
+/**
+ * Asks Razorpay whether a payment really went through. A valid signature proves the order and payment ids
+ * belong together; only the payment's own status proves money moved. Returns:
+ *  - "captured":     paid (status captured, or authorised with auto-capture on), for this order and amount;
+ *  - "mismatch":     Razorpay knows the payment but for a different order or amount: refuse it;
+ *  - "not_captured": the payment exists but did not succeed (failed, created, refunded...);
+ *  - "unreachable":  Razorpay could not be asked (or does not know the payment yet): leave it pending, the
+ *                    webhook or a reconcile will settle it.
+ */
+export async function confirmPayment({ orderId, paymentId, amountInPaise }) {
+  const { ok, payload } = await call(`/payments/${encodeURIComponent(paymentId)}`);
+  if (!ok || !payload) return { state: "unreachable", status: null };
+  if (payload.order_id !== orderId || Number(payload.amount) !== amountInPaise) return { state: "mismatch", status: payload.status };
+  if (payload.status === "captured" || payload.status === "authorized") return { state: "captured", status: payload.status };
+  return { state: "not_captured", status: payload.status };
+}
+
+/** Every payment Razorpay holds for an order, or null when Razorpay could not be asked. Used to reconcile stuck payments. */
+export async function fetchOrderPayments(orderId) {
+  const { ok, payload } = await call(`/orders/${encodeURIComponent(orderId)}/payments`);
+  if (!ok || !Array.isArray(payload?.items)) return null;
+  return payload.items;
 }
 
 function timingSafeEqualHex(expectedHex, actualHex) {
@@ -74,15 +106,8 @@ function timingSafeEqualHex(expectedHex, actualHex) {
 }
 
 /** Verifies the signature Razorpay Checkout returns after a successful payment. */
-export function verifyPaymentSignature({ orderId, paymentId, signature, allowMock = false }) {
-  // The dummy checkout: only in mock mode, only for registration payments, only for a dummy order.
-  if (allowMock && isMockPayments() && String(orderId).startsWith(MOCK_ORDER_PREFIX)) {
-    return signature === MOCK_SIGNATURE;
-  }
-  const expected = crypto
-    .createHmac("sha256", requireSecret("keySecret"))
-    .update(`${orderId}|${paymentId}`)
-    .digest("hex");
+export function verifyPaymentSignature({ orderId, paymentId, signature }) {
+  const expected = crypto.createHmac("sha256", requireSecret("keySecret")).update(`${orderId}|${paymentId}`).digest("hex");
   return timingSafeEqualHex(expected, signature);
 }
 
