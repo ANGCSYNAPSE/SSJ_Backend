@@ -129,8 +129,8 @@ export const RegistrationPaymentModel = {
     return {
       total: rows[0]?.total_rows ?? 0,
       items: rows.map((row) => {
-        const { totalRows: _totalRows, amountInRupees, ...entity } = rowToEntity(row);
-        return { ...entity, amount: Number(amountInRupees) };
+        const { totalRows: _totalRows, amountInRupees, refundedAmount, netAmountInRupees: _net, ...entity } = rowToEntity(row);
+        return { ...entity, amount: Number(amountInRupees), refunded: Number(refundedAmount ?? 0) };
       }),
     };
   },

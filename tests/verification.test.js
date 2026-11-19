@@ -1,6 +1,6 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { api, cleanup, createUser, login, sql, startServer, stopServer } from "./helpers.js";
+import { api, cleanup, createUser, login, payPending, readyToPay, sql, startServer, stopServer } from "./helpers.js";
 
 const { audienceUserIds } = await import("../src/services/audience.service.js");
 
@@ -160,6 +160,58 @@ describe("notifying by verification status", () => {
     const admin = await adminToken();
     const preview = await api("/admin/notifications/audience", { token: admin, body: { audience: { mode: "segment", segment: { verified: "bogus" } } } });
     assert.equal(preview.status, 400);
+  });
+});
+
+describe("the three marks on an account: email, phone, admin", () => {
+  it("a person who signed up is email-verified, not phone-verified, and waiting for the admin", async () => {
+    const { pendingId } = await readyToPay(TAG);
+    const done = await payPending(pendingId, 501);
+    const user = done.done.body.data.user;
+    assert.deepEqual([user.emailVerified, user.mobileVerified, user.isVerified], [true, false, false]);
+
+    const token = done.done.body.data.accessToken;
+    const mine = (await api("/me/dashboard", { token })).body.data.account;
+    assert.deepEqual([mine.emailVerified, mine.mobileVerified, mine.isVerified], [true, false, false]);
+    const me = (await api("/auth/me", { token })).body.data.user;
+    assert.equal(me.emailVerified, true);
+  });
+
+  it("being unverified by the admin does not lower the profile completion", async () => {
+    const { pendingId } = await readyToPay(TAG);
+    const done = await payPending(pendingId, 501);
+    const dashboard = (await api("/me/dashboard", { token: done.done.body.data.accessToken })).body.data;
+    assert.ok(!dashboard.completion.missingAccount.includes("isVerified"));
+  });
+
+  it("the admin sees all three on one person, with the fee and registrations", async () => {
+    const admin = await adminToken();
+    const { pendingId } = await readyToPay(TAG, { category: "musician", profile: {} }, { primarySpecialty: "Tabla", city: "Jaipur", state: "Rajasthan" });
+    const done = await payPending(pendingId, 501);
+    const id = done.done.body.data.user.id;
+
+    const before = (await api(`/admin/verification/${id}`, { token: admin })).body.data;
+    assert.deepEqual([before.emailVerified, before.mobileVerified, before.isVerified], [true, false, false]);
+    assert.ok(before.emailVerifiedAt);
+    assert.equal(before.paid, 501);
+    assert.equal(before.fee.minimum, 501);
+    assert.equal(before.registrations[0].type, "musician");
+    assert.equal(before.payments[0].amount, 501);
+
+    await api(`/admin/verification/${id}`, { method: "PATCH", token: admin, body: { verified: true } });
+    const after = (await api(`/admin/verification/${id}`, { token: admin })).body.data;
+    assert.equal(after.isVerified, true);
+    assert.ok(after.verifiedAt);
+
+    const asUser = (await api("/me/dashboard", { token: done.done.body.data.accessToken })).body.data.account;
+    assert.equal(asUser.isVerified, true);
+  });
+
+  it("an unknown person is a 404, and members cannot look", async () => {
+    const admin = await adminToken();
+    assert.equal((await api("/admin/verification/11111111-1111-4111-8111-111111111111", { token: admin })).status, 404);
+    assert.equal((await api("/admin/verification/not-a-uuid", { token: admin })).status, 404);
+    assert.equal((await api(`/admin/verification/${(await createUser(TAG)).id}`, { token: await tokenOf(await createUser(TAG)) })).status, 403);
   });
 });
 

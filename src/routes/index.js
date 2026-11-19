@@ -14,6 +14,7 @@ import {
 } from "./events.routes.js";
 import { initiativesRouter } from "./initiatives.routes.js";
 import { meRouter } from "./me.routes.js";
+import { mobileRouter } from "./mobile.routes.js";
 import { signupFlowRouter } from "./signupFlow.routes.js";
 import { adminPaymentsRouter, paymentsRouter } from "./payments.routes.js";
 import { adminNotificationsRouter, notificationsRouter } from "./notifications.routes.js";
@@ -97,6 +98,7 @@ router.use("/auth", authRoutes);
 router.use("/contact", contactRouter);
 router.use("/donations", donationsRouter);
 router.use("/events/:eventId/volunteers", eventVolunteersRouter);
+router.use("/me/mobile", mobileRouter);
 router.use("/me", meRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/payments", paymentsRouter);

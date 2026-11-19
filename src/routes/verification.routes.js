@@ -23,6 +23,32 @@ const bulkSchema = z.object({ userIds: z.array(z.string().uuid()).min(1).max(200
 
 const PAID = "(SELECT COALESCE(SUM(p.net_amount_in_rupees), 0) FROM registration_payments p WHERE p.user_id = u.id AND p.status = 'paid')";
 
+const ITEM_SELECT = `SELECT u.id, u.role, u.full_name, u.email, u.mobile, u.location, u.is_verified, u.is_blocked, u.verified_at, u.email_verified_at, u.mobile_verified_at, u.created_at,
+              ${PAID} AS paid,
+              COALESCE((SELECT json_agg(json_build_object('type', r.type::text, 'status', r.status::text, 'name', r.display_name, 'complete', r.is_complete, 'missing', jsonb_array_length(r.missing_fields)) ORDER BY r.created_at)
+                          FROM all_registrations r WHERE r.user_id = u.id), '[]'::json) AS registrations,
+              vb.full_name AS verified_by
+         FROM users u LEFT JOIN users vb ON vb.id = u.verified_by`;
+
+const toItem = (row) => ({
+  id: row.id,
+  fullName: row.full_name,
+  email: row.email,
+  mobile: row.mobile,
+  location: row.location,
+  isVerified: row.is_verified,
+  isBlocked: row.is_blocked,
+  emailVerified: Boolean(row.email_verified_at),
+  emailVerifiedAt: row.email_verified_at,
+  mobileVerified: Boolean(row.mobile_verified_at),
+  mobileVerifiedAt: row.mobile_verified_at,
+  verifiedAt: row.verified_at,
+  verifiedBy: row.verified_by,
+  createdAt: row.created_at,
+  paid: Number(row.paid),
+  registrations: row.registrations,
+});
+
 /**
  * @openapi
  * /api/v1/admin/verification:
@@ -83,12 +109,7 @@ adminVerificationRouter.get(
     const [{ n: total }] = await sql(`SELECT COUNT(*)::int AS n FROM users u WHERE ${where.join(" AND ")}`, params);
 
     const rows = await sql(
-      `SELECT u.id, u.full_name, u.email, u.mobile, u.location, u.is_verified, u.is_blocked, u.verified_at, u.email_verified_at, u.mobile_verified_at, u.created_at,
-              ${PAID} AS paid,
-              COALESCE((SELECT json_agg(json_build_object('type', r.type::text, 'status', r.status::text, 'name', r.display_name, 'complete', r.is_complete, 'missing', jsonb_array_length(r.missing_fields)) ORDER BY r.created_at)
-                          FROM all_registrations r WHERE r.user_id = u.id), '[]'::json) AS registrations,
-              vb.full_name AS verified_by
-         FROM users u LEFT JOIN users vb ON vb.id = u.verified_by
+      `${ITEM_SELECT}
         WHERE ${where.join(" AND ")}
         ORDER BY u.is_verified ASC, u.created_at DESC
         LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
@@ -102,21 +123,39 @@ adminVerificationRouter.get(
         page,
         pageSize,
         fee: { total: feeTotal, minimum },
-        items: rows.map((row) => ({
-          id: row.id,
-          fullName: row.full_name,
-          email: row.email,
-          mobile: row.mobile,
-          location: row.location,
-          isVerified: row.is_verified,
-          isBlocked: row.is_blocked,
-          emailVerified: Boolean(row.email_verified_at),
-          mobileVerified: Boolean(row.mobile_verified_at),
-          verifiedAt: row.verified_at,
-          verifiedBy: row.verified_by,
-          createdAt: row.created_at,
-          paid: Number(row.paid),
-          registrations: row.registrations,
+        items: rows.map(toItem),
+      },
+    });
+  }),
+);
+
+adminVerificationRouter.get(
+  "/:userId",
+  asyncHandler(async (req, res) => {
+    if (!z.string().uuid().safeParse(req.params.userId).success) throw ApiError.notFound("Account not found.");
+    const [row] = await sql(`${ITEM_SELECT} WHERE u.id = $1 AND u.deleted_at IS NULL`, [req.params.userId]);
+    if (!row) throw ApiError.notFound("Account not found.");
+    const [{ total, minimum }, payments] = await Promise.all([
+      getRegistrationFee(),
+      sql(
+        `SELECT id, amount_in_rupees, refunded_amount, status, source, paid_at, created_at
+           FROM registration_payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`,
+        [req.params.userId],
+      ),
+    ]);
+    sendSuccess(res, {
+      data: {
+        ...toItem(row),
+        role: row.role,
+        fee: { total, minimum },
+        payments: payments.map((p) => ({
+          id: p.id,
+          amount: Number(p.amount_in_rupees),
+          refunded: Number(p.refunded_amount),
+          status: p.status,
+          source: p.source,
+          paidAt: p.paid_at,
+          createdAt: p.created_at,
         })),
       },
     });
