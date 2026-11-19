@@ -244,6 +244,14 @@ export const AuthService = {
       throw ApiError.badRequest("This reset link is invalid or has expired. Please request a new one.");
     }
 
+    // The current password cannot be "reset" to itself. The link stays usable so they can pick a different one.
+    const [current] = await sql`SELECT password_hash FROM users WHERE id = ${row.user_id}`;
+    if (current && (await bcrypt.compare(password, current.password_hash))) {
+      throw ApiError.badRequest("Choose a password you have not used for this account.", [
+        { field: "password", message: "This is your current password. Please choose a different one." },
+      ]);
+    }
+
     const passwordHash = await bcrypt.hash(password, env.bcryptRounds);
     await UserModel.setPassword(row.user_id, passwordHash);
     await sql`UPDATE password_resets SET used_at = NOW() WHERE user_id = ${row.user_id} AND used_at IS NULL`;

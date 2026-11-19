@@ -167,6 +167,21 @@ describe("forgot password with an emailed code", () => {
     assert.equal((await reset(token)).status, 200);
   });
 
+  it("the current password cannot be chosen again, and the reset can still be completed with another", async () => {
+    const user = await createUser(TAG);
+    await forgot(user.email);
+    const token = (await verifyCode(user.email, codeFromMail(user.email))).body.data.resetToken;
+
+    const same = await reset(token, user.password);
+    assert.equal(same.status, 400);
+    assert.equal(same.body.errors[0].field, "password");
+    assert.match(same.body.errors[0].message, /current password/i);
+    assert.equal((await api("/auth/login", { body: { email: user.email, password: user.password } })).status, 200, "nothing changed");
+
+    assert.equal((await reset(token, "Different@123")).status, 200, "the same token still works for a different password");
+    assert.equal((await api("/auth/login", { body: { email: user.email, password: "Different@123" } })).status, 200);
+  });
+
   it("a made-up token is refused", async () => {
     assert.equal((await reset("0".repeat(64))).status, 400);
     assert.equal((await api("/auth/reset-password", { body: { password: "Brand@New123", confirmPassword: "Brand@New123" } })).status, 400);
