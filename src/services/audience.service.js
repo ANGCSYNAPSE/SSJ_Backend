@@ -12,6 +12,7 @@ import { getRegistrationFee } from "../config/plans.js";
  *   categories:   registered as any of these (artist, dancer, musician, temple, dharamshala, mandal)
  *   profile:      "incomplete" (a registration still has required details missing) | "complete"
  *   registration: "none" (plain members, no category) | "any" (registered in at least one category)
+ *   verified:     "yes" (an admin has verified the account) | "no" (not verified yet)
  */
 const MAX_AUDIENCE = 20_000;
 
@@ -32,7 +33,7 @@ async function build(audience) {
 
   if (segment.fee) {
     const { total } = await getRegistrationFee();
-    const paid = "(SELECT COALESCE(SUM(p.amount_in_rupees), 0) FROM registration_payments p WHERE p.user_id = u.id AND p.status = 'paid')";
+    const paid = "(SELECT COALESCE(SUM(p.net_amount_in_rupees), 0) FROM registration_payments p WHERE p.user_id = u.id AND p.status = 'paid')";
     where.push(segment.fee === "paid" ? `${paid} >= ${add(total)}` : segment.fee === "partial" ? `${paid} > 0 AND ${paid} < ${add(total)}` : `${paid} = 0`);
   }
   if (segment.categories?.length) {
@@ -48,6 +49,7 @@ async function build(audience) {
   }
   if (segment.registration === "none") where.push("NOT EXISTS (SELECT 1 FROM all_registrations r WHERE r.user_id = u.id)");
   if (segment.registration === "any") where.push("EXISTS (SELECT 1 FROM all_registrations r WHERE r.user_id = u.id)");
+  if (segment.verified) where.push(segment.verified === "yes" ? "u.is_verified = TRUE" : "u.is_verified = FALSE");
 
   return { text: `SELECT u.id FROM users u WHERE ${where.join(" AND ")}`, params };
 }

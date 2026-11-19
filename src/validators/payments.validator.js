@@ -47,3 +47,9 @@ export const feeSettingsSchema = z
     minimum: z.number({ message: "Enter the minimum first payment in rupees." }).int("Use a whole number of rupees.").min(1, "The minimum must be at least ₹1."),
   })
   .refine((fee) => fee.minimum <= fee.total, { path: ["minimum"], message: "The minimum first payment cannot be more than the total fee." });
+
+/** An admin refund. `amount` (rupees, up to 2 decimals) is left out to refund everything still refundable. */
+export const refundSchema = z.object({
+  amount: z.number().positive().max(1_000_000).multipleOf(0.01).optional(),
+  reason: z.string().trim().min(3, "Say why, so the record makes sense later.").max(200, "Keep the reason under 200 characters."),
+});

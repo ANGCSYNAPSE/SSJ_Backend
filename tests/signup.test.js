@@ -314,7 +314,9 @@ describe("the account is created only when the payment succeeds", () => {
     assert.equal(paid.done.status, 201);
     const { user, accessToken } = paid.done.body.data;
     assert.equal(user.email, who.email);
-    assert.equal(user.isVerified, true);
+    assert.equal(user.emailVerified, true, "the emailed code proves the email");
+    assert.equal(user.mobileVerified, false);
+    assert.equal(user.isVerified, false, "an admin has not checked the account yet");
     assert.equal(user.location, "Jaipur, Rajasthan");
     assert.equal(user.registrationFee, "partial");
     assert.ok(accessToken);

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import express, { Router } from "express";
+import { z } from "zod";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
@@ -24,6 +25,7 @@ import {
   adminPaymentsQuerySchema,
   adminPendingQuerySchema,
   manualPaymentSchema,
+  refundSchema,
   registrationOrderSchema,
   verifyRegistrationPaymentSchema,
 } from "../validators/payments.validator.js";
@@ -32,6 +34,7 @@ import {
   createRazorpayOrder,
   fetchOrderPayments,
   razorpayConfigured,
+  refundRazorpayPayment,
   verifyPaymentSignature,
   verifyWebhookSignature,
 } from "../services/razorpay.service.js";
@@ -58,6 +61,19 @@ async function notifyPaid(row) {
   });
 }
 
+/** "Refund on its way" in the person's bell, once per refund. */
+async function notifyRefund(row, amount, refundId) {
+  if (!row?.userId) return;
+  await NotificationModel.notify(row.userId, {
+    kind: "info",
+    category: "payment",
+    title: "Refund initiated",
+    message: `A refund of ₹${Number(amount).toLocaleString("en-IN")} has been started to your original payment method. It usually reaches you in 5 to 7 working days.`,
+    link: "/profile",
+    dedupeKey: `refund:${refundId ?? `${row.id}:${amount}:${Date.now()}`}`,
+  });
+}
+
 const money = (row) => ({
   id: row.id,
   plan: row.plan,
@@ -70,6 +86,7 @@ const money = (row) => ({
   failureReason: row.failureReason,
   paidAt: row.paidAt,
   createdAt: row.createdAt,
+  refunded: Number(row.refundedAmount ?? 0),
 });
 
 /**
@@ -271,6 +288,24 @@ registrationWebhookRouter.post(
         await RegistrationPaymentModel.markFailed(orderId, payment?.id, payment?.error_description);
       }
     }
+    if (["refund.created", "refund.processed", "refund.failed"].includes(event.event)) {
+      const refund = event?.payload?.refund?.entity;
+      const row = refund?.payment_id ? await RegistrationPaymentModel.findByRazorpayPaymentId(refund.payment_id) : null;
+      // Only payments in our own table: anything else on the shared Razorpay account is not ours to touch.
+      if (row && refund?.id) {
+        const amount = Number(refund.amount) / 100;
+        const status = event.event === "refund.failed" ? "failed" : event.event === "refund.processed" ? "processed" : "pending";
+        const { inserted } = await RegistrationPaymentModel.recordRefund({
+          paymentId: row.id,
+          refundId: refund.id,
+          amount,
+          status,
+          source: "dashboard",
+        });
+        if (inserted && status !== "failed") await notifyRefund(row, amount, refund.id);
+        if (!inserted && status !== "pending") await RegistrationPaymentModel.settleRefund(refund.id, status);
+      }
+    }
     sendSuccess(res, { message: "Received.", data: { received: true, event: event.event } });
   }),
 );
@@ -310,6 +345,94 @@ registrationWebhookRouter.post(
  *     responses:
  *       201: { description: The recorded payment }
  */
+/**
+ * @openapi
+ * /api/v1/admin/payments/{id}/refund:
+ *   post:
+ *     tags: [Payments]
+ *     summary: Refund some or all of a paid registration fee (admin)
+ *     description: "Body: { amount?, reason }. Leave amount out to refund what is left. Razorpay payments are refunded through Razorpay (5-7 working days to the customer; Razorpay does not return its own fee). Manual payments are only recorded here: the money is returned by the admin outside Razorpay."
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: "{ payment, refund, fee, belowMinimum }" }
+ *       400: { description: Not refundable, or Razorpay refused }
+ *       404: { description: Unknown payment }
+ *       502: { description: Razorpay could not be reached; nothing changed }
+ * /api/v1/admin/payments/{id}/refunds:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Every refund made against one payment (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: "[{ id, refundId, amount, status, source, reason, createdAt, by }]" }
+ */
+adminPaymentsRouter.post(
+  "/:id/refund",
+  validate(refundSchema),
+  asyncHandler(async (req, res) => {
+    const row = z.string().uuid().safeParse(req.params.id).success ? await RegistrationPaymentModel.findById(req.params.id) : null;
+    if (!row) throw ApiError.notFound("Payment not found.");
+    if (row.status !== "paid") throw ApiError.badRequest("Only a payment that was received can be refunded.");
+
+    const paid = Number(row.amountInRupees);
+    const left = Math.round((paid - Number(row.refundedAmount ?? 0)) * 100) / 100;
+    if (left <= 0) throw ApiError.badRequest("This payment has already been fully refunded.");
+    const amount = req.validated.amount ?? left;
+    if (amount > left) throw ApiError.badRequest(`At most ₹${left.toLocaleString("en-IN")} can still be refunded on this payment.`);
+
+    let refundId = null;
+    let status = "processed";
+    if (row.source === "razorpay") {
+      if (!row.razorpayPaymentId) throw ApiError.badRequest("This payment has no Razorpay payment id, so it cannot be refunded through Razorpay.");
+      const refund = await refundRazorpayPayment({
+        paymentId: row.razorpayPaymentId,
+        amountInPaise: Math.round(amount * 100),
+        notes: { app: PAYMENT_APP, purpose: "registration_fee_refund", reason: req.validated.reason.slice(0, 200) },
+        receipt: `SJ-RFD-${Date.now().toString(36)}`,
+      });
+      refundId = refund.id;
+      status = refund.status;
+    }
+
+    const { inserted } = await RegistrationPaymentModel.recordRefund({
+      paymentId: row.id,
+      refundId,
+      amount,
+      status,
+      source: row.source === "razorpay" ? "admin" : "manual",
+      reason: req.validated.reason,
+      createdBy: req.user.id,
+    });
+    if (inserted) await notifyRefund(row, amount, refundId);
+    else if (refundId && status !== "pending") await RegistrationPaymentModel.settleRefund(refundId, status);
+
+    const updated = await RegistrationPaymentModel.findById(row.id);
+    const fee = await feeStatusFor(row.userId);
+    sendSuccess(res, {
+      message: row.source === "razorpay" ? `Refund of ₹${amount.toLocaleString("en-IN")} started. The customer receives it in 5 to 7 working days.` : `Refund of ₹${amount.toLocaleString("en-IN")} recorded.`,
+      data: {
+        payment: money(updated),
+        refund: { id: refundId, amount, status },
+        fee,
+        // The person has fallen below the minimum fee: the admin may want to un-verify or message them.
+        belowMinimum: fee.paid < fee.minimum,
+      },
+    });
+  }),
+);
+
+adminPaymentsRouter.get(
+  "/:id/refunds",
+  asyncHandler(async (req, res) => {
+    if (!z.string().uuid().safeParse(req.params.id).success) throw ApiError.notFound("Payment not found.");
+    sendSuccess(res, { data: await RegistrationPaymentModel.listRefunds(req.params.id) });
+  }),
+);
+
 adminPaymentsRouter.get(
   "/summary",
   asyncHandler(async (_req, res) => {
@@ -495,14 +618,11 @@ adminPaymentsRouter.post(
     const expected = Math.round(Number(row.amountInRupees) * 100);
     const captured = payments.find((p) => (p.status === "captured" || p.status === "authorized") && Number(p.amount) >= expected);
     const updated = captured
-      ? (async () => {
-          const paid = await RegistrationPaymentModel.markPaid(row.razorpayOrderId, captured.id);
-          await notifyPaid(paid);
-          return paid;
-        })()
+      ? await RegistrationPaymentModel.markPaid(row.razorpayOrderId, captured.id)
       : row.status === "created"
         ? await RegistrationPaymentModel.markFailed(row.razorpayOrderId, null, "Abandoned: no payment was made for this order")
         : row;
+    if (captured) await notifyPaid(updated);
     sendSuccess(res, {
       message: captured ? "Found a captured payment. Marked as paid." : row.status === "created" ? "No payment was made. Marked as abandoned." : "Razorpay holds no captured payment for this order. Left as failed.",
       data: money(updated ?? row),

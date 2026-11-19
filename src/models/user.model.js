@@ -5,7 +5,7 @@ import { sql } from "../config/database.js";
  * excluded from every projection in this module.
  */
 const PUBLIC_COLUMNS = sql`
-  id, full_name, email, mobile, role, is_verified, created_at
+  id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, created_at
 `;
 
 /** Maps a snake_case DB row to the camelCase shape the API exposes. */
@@ -17,7 +17,13 @@ export function toUser(row) {
     email: row.email,
     mobile: row.mobile,
     role: row.role,
+    // Three separate marks: the admin's check, and the person's own proof of email and mobile.
     isVerified: row.is_verified,
+    adminVerifiedAt: row.verified_at ?? null,
+    emailVerified: Boolean(row.email_verified_at),
+    emailVerifiedAt: row.email_verified_at ?? null,
+    mobileVerified: Boolean(row.mobile_verified_at),
+    mobileVerifiedAt: row.mobile_verified_at ?? null,
     isBlocked: row.is_blocked,
     isMember: row.is_member ?? false,
     location: row.location ?? null,
@@ -30,7 +36,7 @@ export function toUser(row) {
 export const UserModel = {
   async findById(id) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at
       FROM users
       WHERE id = ${id} AND deleted_at IS NULL
     `;
@@ -39,7 +45,7 @@ export const UserModel = {
 
   async findByEmail(email) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at
       FROM users
       WHERE email = ${email} AND deleted_at IS NULL
     `;
@@ -49,7 +55,7 @@ export const UserModel = {
   /** Includes the hash — only for the login path, never returned to a client. */
   async findByEmailWithPassword(email) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at,
+      SELECT id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at,
              password_hash
       FROM users
       WHERE email = ${email} AND deleted_at IS NULL
@@ -60,7 +66,7 @@ export const UserModel = {
 
   async findByMobile(mobile) {
     const [row] = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at
       FROM users
       WHERE mobile = ${mobile} AND deleted_at IS NULL
     `;
@@ -82,7 +88,7 @@ export const UserModel = {
     const [row] = await sql`
       INSERT INTO users (full_name, email, mobile, password_hash, role, location, avatar_url, is_verified, is_blocked, is_member)
       VALUES (${fullName}, ${email}, ${mobile}, ${passwordHash}, ${role}, ${location}, ${avatarUrl}, ${isVerified}, ${isBlocked}, ${isMember})
-      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at
+      RETURNING id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at
     `;
     return toUser(row);
   },
@@ -107,7 +113,7 @@ export const UserModel = {
     const values = entries.map(([, value]) => value);
     const rows = await sql(
       `UPDATE users SET ${setSql} WHERE id = $${values.length + 1} AND deleted_at IS NULL
-       RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, last_login_at, created_at`,
+       RETURNING id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, last_login_at, created_at`,
       [...values, id],
     );
     return toUser(rows[0]);
@@ -134,7 +140,7 @@ export const UserModel = {
   /** Admin user-management list — every non-deleted account. */
   async list() {
     const rows = await sql`
-      SELECT id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, last_login_at, created_at
+      SELECT id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, last_login_at, created_at
       FROM users
       WHERE deleted_at IS NULL
       ORDER BY created_at DESC
@@ -146,7 +152,7 @@ export const UserModel = {
     const [row] = await sql`
       UPDATE users SET is_blocked = ${isBlocked}
       WHERE id = ${id} AND deleted_at IS NULL
-      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at
+      RETURNING id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at
     `;
     return toUser(row);
   },
@@ -155,7 +161,7 @@ export const UserModel = {
     const [row] = await sql`
       UPDATE users SET role = ${role}
       WHERE id = ${id} AND deleted_at IS NULL
-      RETURNING id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at
+      RETURNING id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at
     `;
     return toUser(row);
   },

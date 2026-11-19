@@ -18,7 +18,7 @@ import { RefreshTokens } from "../models/refreshToken.model.js";
 const hashToken = (token) => createHash("sha256").update(token).digest("hex");
 
 const USER_COLUMNS =
-  "id, full_name, email, mobile, role, is_verified, is_blocked, is_member, location, avatar_url, created_at";
+  "id, full_name, email, mobile, role, is_verified, verified_at, email_verified_at, mobile_verified_at, is_blocked, is_member, location, avatar_url, created_at";
 
 export const AuthService = {
   /** Adds the categories (artist, temple, ...) the user has registered for. */
@@ -93,8 +93,8 @@ export const AuthService = {
       try {
         const [[userRow]] = await sql.transaction((txn) => [
           txn(
-            `INSERT INTO users (id, full_name, email, mobile, password_hash, is_member, is_verified)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${USER_COLUMNS}`,
+            `INSERT INTO users (id, full_name, email, mobile, password_hash, is_member, email_verified_at)
+             VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7::boolean THEN NOW() END) RETURNING ${USER_COLUMNS}`,
             [userId, fullName, email, mobile, passwordHash, becomeMember, emailVerified],
           ),
           txn(profileText, profileValues),
@@ -109,8 +109,8 @@ export const AuthService = {
     } else {
       try {
         const [row] = await sql(
-          `INSERT INTO users (full_name, email, mobile, password_hash, is_member, is_verified, location)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${USER_COLUMNS}`,
+          `INSERT INTO users (full_name, email, mobile, password_hash, is_member, email_verified_at, location)
+           VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::boolean THEN NOW() END, $7) RETURNING ${USER_COLUMNS}`,
           [fullName, email, mobile, passwordHash, becomeMember, emailVerified, location ?? null],
         );
         user = toUser(row);

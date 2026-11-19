@@ -8,6 +8,7 @@ import { UserModel } from "../models/user.model.js";
 import bcrypt from "bcryptjs";
 import { env } from "../config/env.js";
 import { AuthService } from "../services/auth.service.js";
+import { setVerified } from "../services/verification.service.js";
 import { changeRoleSchema, createUserSchema, updateUserSchema } from "../validators/users.validator.js";
 
 /**
@@ -144,7 +145,6 @@ adminUsersRouter.patch(
 
     const patch = { ...fields };
     if (status) {
-      patch.isVerified = status !== "pending";
       patch.isBlocked = status === "suspended";
     }
     // Admins can't lock themselves out or demote themselves by accident.
@@ -153,6 +153,8 @@ adminUsersRouter.patch(
     }
 
     const updated = await UserModel.update(req.params.id, patch);
+    // Verification goes through one place so the person is told and the date is recorded.
+    if (status) await setVerified([req.params.id], status !== "pending", req.user.id);
     sendSuccess(res, { message: "Updated.", data: updated });
   }),
 );

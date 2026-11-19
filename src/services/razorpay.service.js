@@ -100,6 +100,26 @@ export async function fetchOrderPayments(orderId) {
   return payload.items;
 }
 
+/**
+ * Refunds some or all of a captured payment back to the customer's own bank, card or UPI account.
+ * Razorpay allows several partial refunds until the payment's full amount has gone back. Returns
+ * { id, status ("pending" | "processed" | "failed"), amount (paise) }.
+ */
+export async function refundRazorpayPayment({ paymentId, amountInPaise, notes, receipt }) {
+  if (!Number.isInteger(amountInPaise) || amountInPaise <= 0) throw new Error("amountInPaise must be a positive integer");
+  if (!razorpayConfigured()) throw new ApiError(503, "Online payments are not set up yet, so a refund cannot be made from here.");
+  const { ok, status, payload } = await call(`/payments/${encodeURIComponent(paymentId)}/refund`, {
+    method: "POST",
+    body: { amount: amountInPaise, speed: "normal", notes, receipt },
+    timeoutMs: CREATE_TIMEOUT_MS,
+  });
+  if (ok && payload?.id) return { id: payload.id, status: payload.status ?? "pending", amount: Number(payload.amount ?? amountInPaise) };
+  if (status === null) throw new ApiError(502, "Razorpay could not be reached, so nothing was refunded. Please try again in a moment.");
+  // Razorpay's own sentence is usually the useful one ("already fully refunded", "insufficient balance"...).
+  const reason = typeof payload?.error?.description === "string" && payload.error.description.length < 200 ? payload.error.description : null;
+  throw ApiError.badRequest(reason ? `Razorpay did not refund this: ${reason}` : "Razorpay did not accept this refund. Nothing was changed.");
+}
+
 function timingSafeEqualHex(expectedHex, actualHex) {
   const expected = Buffer.from(expectedHex, "hex");
   const actual = Buffer.from(actualHex ?? "", "hex");

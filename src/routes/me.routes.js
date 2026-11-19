@@ -94,7 +94,6 @@ meRouter.get(
     const accountChecks = [
       { key: "location", filled: Boolean(user.location) },
       { key: "avatarUrl", filled: Boolean(user.avatarUrl) },
-      { key: "isVerified", filled: Boolean(user.isVerified) },
     ];
     const required = profiles.reduce((sum, p) => sum + p.requiredCount, 0) + accountChecks.length;
     const missing = profiles.reduce((sum, p) => sum + p.missing.length, 0) + accountChecks.filter((c) => !c.filled).length;

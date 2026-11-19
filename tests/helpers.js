@@ -66,6 +66,13 @@ export function setOrdersFail(value) {
   ordersFail = value;
 }
 
+let refundsFail = false;
+let refundSeq = 0;
+/** Makes Razorpay refuse refunds, like an account with too little balance. */
+export function setRefundsFail(value) {
+  refundsFail = value;
+}
+
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 export async function startServer() {
@@ -85,6 +92,13 @@ export async function startServer() {
       orderSeq += 1;
       return json({ id: `order_autotest_${Date.now()}_${orderSeq}`, amount: body.amount, currency: body.currency ?? "INR" });
     }
+    const refund = /\/payments\/([^/?]+)\/refund$/.exec(u);
+    if (refund) {
+      if (refundsFail) return json({ error: { description: "Your account balance is not sufficient to carry out this refund." } }, 400);
+      refundSeq += 1;
+      const body = JSON.parse(init.body);
+      return json({ id: `rfnd_autotest_${Date.now()}_${refundSeq}`, payment_id: decodeURIComponent(refund[1]), amount: body.amount, status: "processed" });
+    }
     const one = /\/payments\/([^/?]+)$/.exec(u);
     if (one) {
       const payment = knownPayments.get(decodeURIComponent(one[1]));
@@ -101,6 +115,7 @@ export async function stopServer() {
   globalThis.fetch = realFetch;
   razorpayDown = false;
   ordersFail = false;
+  refundsFail = false;
   await new Promise((resolve) => server.close(resolve));
 }
 
