@@ -120,7 +120,8 @@ describe("receipts by email", () => {
     const user = await createUser(TAG);
     const token = await tokenOf(user);
     const p = await pay(user, token, 501);
-    await sql(`UPDATE users SET email = 'x' WHERE id = $1`, [user.id]); // an address the mail layer will choke on or ignore
+    // An address the mail layer will choke on or ignore. It keeps the autotest+ prefix so cleanup still finds it.
+    await sql(`UPDATE users SET email = $2 WHERE id = $1`, [user.id, `autotest+${TAG}-bad-address-${Date.now()}`]);
     const res = await api("/payments/registration/verify", { token, body: { razorpay_order_id: p.orderId, razorpay_payment_id: p.paymentId, razorpay_signature: p.signature } });
     assert.equal(res.status, 200);
     const [row] = await sql(`SELECT status FROM registration_payments WHERE razorpay_order_id = $1`, [p.orderId]);
