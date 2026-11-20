@@ -115,6 +115,9 @@ export async function refundRazorpayPayment({ paymentId, amountInPaise, notes, r
   });
   if (ok && payload?.id) return { id: payload.id, status: payload.status ?? "pending", amount: Number(payload.amount ?? amountInPaise) };
   if (status === null) throw new ApiError(502, "Razorpay could not be reached, so nothing was refunded. Please try again in a moment.");
+  if (status === 404 || /does not exist/i.test(payload?.error?.description ?? "")) {
+    throw ApiError.badRequest("Razorpay has no record of this payment, so it cannot be refunded there. It may be a test payment or one made on a different Razorpay account.");
+  }
   // Razorpay's own sentence is usually the useful one ("already fully refunded", "insufficient balance"...).
   const reason = typeof payload?.error?.description === "string" && payload.error.description.length < 200 ? payload.error.description : null;
   throw ApiError.badRequest(reason ? `Razorpay did not refund this: ${reason}` : "Razorpay did not accept this refund. Nothing was changed.");

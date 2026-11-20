@@ -20,6 +20,7 @@ import {
   saveRegistrationFee,
 } from "../config/plans.js";
 import { env, isProduction } from "../config/env.js";
+import { sendRefundEmail } from "../services/mail.service.js";
 import {
   feeSettingsSchema,
   adminPaymentsQuerySchema,
@@ -61,8 +62,8 @@ async function notifyPaid(row) {
   });
 }
 
-/** "Refund on its way" in the person's bell, once per refund. */
-async function notifyRefund(row, amount, refundId) {
+/** "Refund on its way": a note in the person's bell and an email, once per refund. */
+async function notifyRefund(row, amount, refundId, { manual = false } = {}) {
   if (!row?.userId) return;
   await NotificationModel.notify(row.userId, {
     kind: "info",
@@ -72,6 +73,16 @@ async function notifyRefund(row, amount, refundId) {
     link: "/profile",
     dedupeKey: `refund:${refundId ?? `${row.id}:${amount}:${Date.now()}`}`,
   });
+
+  // The email never undoes a refund that has already been made.
+  try {
+    const user = await UserModel.findById(row.userId);
+    if (!user) return;
+    const fee = await feeStatusFor(row.userId);
+    await sendRefundEmail({ to: user.email, fullName: user.fullName, amount, refundId, paid: fee.paid, balance: fee.balance, manual });
+  } catch (error) {
+    console.error("[mail] refund email not sent:", error.message);
+  }
 }
 
 const money = (row) => ({
@@ -384,9 +395,13 @@ adminPaymentsRouter.post(
     const amount = req.validated.amount ?? left;
     if (amount > left) throw ApiError.badRequest(`At most ₹${left.toLocaleString("en-IN")} can still be refunded on this payment.`);
 
+    // Leftovers of the old dummy checkout (pay_mock_... / order_mock_...) never existed at Razorpay, so there is
+    // nothing to refund there: the refund is only recorded here.
+    const isMock = /^pay_mock_/.test(row.razorpayPaymentId ?? "") || /^order_mock_/.test(row.razorpayOrderId ?? "");
+
     let refundId = null;
     let status = "processed";
-    if (row.source === "razorpay") {
+    if (row.source === "razorpay" && !isMock) {
       if (!row.razorpayPaymentId) throw ApiError.badRequest("This payment has no Razorpay payment id, so it cannot be refunded through Razorpay.");
       const refund = await refundRazorpayPayment({
         paymentId: row.razorpayPaymentId,
@@ -403,17 +418,20 @@ adminPaymentsRouter.post(
       refundId,
       amount,
       status,
-      source: row.source === "razorpay" ? "admin" : "manual",
+      source: row.source === "razorpay" && !isMock ? "admin" : "manual",
       reason: req.validated.reason,
       createdBy: req.user.id,
     });
-    if (inserted) await notifyRefund(row, amount, refundId);
+    // A test payment's refund is a bookkeeping entry: nobody is told, since no real money moved.
+    if (inserted && !isMock) await notifyRefund(row, amount, refundId, { manual: row.source !== "razorpay" });
     else if (refundId && status !== "pending") await RegistrationPaymentModel.settleRefund(refundId, status);
 
     const updated = await RegistrationPaymentModel.findById(row.id);
     const fee = await feeStatusFor(row.userId);
     sendSuccess(res, {
-      message: row.source === "razorpay" ? `Refund of ₹${amount.toLocaleString("en-IN")} started. The customer receives it in 5 to 7 working days.` : `Refund of ₹${amount.toLocaleString("en-IN")} recorded.`,
+      message: isMock
+        ? `Refund of ₹${amount.toLocaleString("en-IN")} recorded. This was a test payment from the old dummy checkout, so nothing was sent to Razorpay.`
+        : row.source === "razorpay" ? `Refund of ₹${amount.toLocaleString("en-IN")} started. The customer receives it in 5 to 7 working days.` : `Refund of ₹${amount.toLocaleString("en-IN")} recorded.`,
       data: {
         payment: money(updated),
         refund: { id: refundId, amount, status },

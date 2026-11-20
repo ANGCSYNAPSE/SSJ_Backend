@@ -95,6 +95,7 @@ export async function startServer() {
     }
     const refund = /\/payments\/([^/?]+)\/refund$/.exec(u);
     if (refund) {
+      if (refundsFail === "missing") return json({ message: "no Route matched with those values" }, 404);
       if (refundsFail) return json({ error: { description: "Your account balance is not sufficient to carry out this refund." } }, 400);
       refundSeq += 1;
       const body = JSON.parse(init.body);

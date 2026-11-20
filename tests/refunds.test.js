@@ -4,7 +4,9 @@ import {
   api,
   cleanup,
   createUser,
+  lastMailTo,
   login,
+  mailCountTo,
   registerPayment,
   setRazorpayDown,
   setRefundsFail,
@@ -74,6 +76,33 @@ describe("admin refunds", () => {
     assert.ok(note);
     assert.match(note.message, /₹501/);
     assert.ok(user.id);
+  });
+
+  it("emails the member about the refund, with the amount, the reference and the timing", async () => {
+    const { user, id } = await paidMember(1100);
+    const res = await refund(await adminToken(), id, { amount: 300, reason: "Goodwill" });
+    assert.equal(res.status, 200);
+
+    assert.equal(mailCountTo(user.email, "refund"), 1);
+    const mail = lastMailTo(user.email);
+    assert.match(mail.subject, /refund of ₹300 has been started/i);
+    assert.match(mail.text, new RegExp(res.body.data.refund.id), "the Razorpay refund reference is in the email");
+    assert.match(mail.text, /5 to 7 working days/);
+    assert.match(mail.text, /Registration fee paid now: ₹800/);
+    assert.match(mail.text, /Balance still to pay: ₹300/);
+    assert.ok(!/Goodwill/.test(mail.text), "the admin's private reason is not shown to the member");
+    assert.match(mail.html, /refund-policy/);
+  });
+
+  it("a refund recorded by hand says the team returns the money directly", async () => {
+    const admin = await adminToken();
+    const user = await createUser(TAG);
+    const made = await api("/admin/payments/manual", { token: admin, body: { userId: user.id, amount: 600, reference: "UPI-RFD-MAIL" } });
+    await refund(admin, made.body.data.id, { amount: 600, reason: "Returned in cash" });
+    const mail = lastMailTo(user.email);
+    assert.match(mail.subject, /refund of ₹600/i);
+    assert.match(mail.text, /returned to you directly by the team/);
+    assert.ok(!/working days/.test(mail.text.split("\n").slice(0, 6).join("\n")), "no bank timing for an offline payment");
   });
 
   it("refunds part of a payment, then the rest, and never more than was paid", async () => {
@@ -167,6 +196,43 @@ describe("admin refunds", () => {
     assert.equal(log.source, "manual");
   });
 
+  it("a leftover test payment from the old dummy checkout is refunded in the records only, and the member is not emailed", async () => {
+    const admin = await adminToken();
+    const user = await createUser(TAG);
+    const [row] = await sql(
+      `INSERT INTO registration_payments (user_id, plan, amount_in_rupees, status, receipt, razorpay_order_id, razorpay_payment_id, paid_at)
+       VALUES ($1, 'full', 600, 'paid', 'SJ-REG-mock', $2, $3, NOW()) RETURNING id`,
+      [user.id, `order_mock_${Date.now()}`, `pay_mock_${Date.now()}`],
+    );
+    setRazorpayDown(true); // would fail if Razorpay were asked
+    try {
+      const res = await refund(admin, row.id, { amount: 400, reason: "paid twice" });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.match(res.body.message, /test payment/i);
+      assert.equal(res.body.data.refund.id, null);
+    } finally {
+      setRazorpayDown(false);
+    }
+    assert.equal((await feeOf(await tokenOf(user))).paid, 200);
+    assert.equal(mailCountTo(user.email, "refund"), 0);
+    const [log] = (await api(`/admin/payments/${row.id}/refunds`, { token: admin })).body.data;
+    assert.equal(log.source, "manual");
+  });
+
+  it("when Razorpay has no such payment the message says so plainly", async () => {
+    const admin = await adminToken();
+    const { id } = await paidMember(501);
+    await sql(`UPDATE registration_payments SET razorpay_payment_id = 'pay_not_known_by_razorpay' WHERE id = $1`, [id]);
+    setRefundsFail("missing");
+    try {
+      const res = await refund(admin, id, { reason: "Test" });
+      assert.equal(res.status, 400);
+      assert.match(res.body.message, /no record of this payment/i);
+    } finally {
+      setRefundsFail(false);
+    }
+  });
+
   it("refunds show in the totals and the payments list", async () => {
     const { id } = await paidMember(501);
     const admin = await adminToken();
@@ -187,7 +253,8 @@ describe("refunds made in the Razorpay dashboard", () => {
   };
 
   it("are noticed, counted once, and the person is told", async () => {
-    const { token, razorpayId } = await paidMember(1100);
+    const { token, razorpayId, user } = await paidMember(1100);
+    const userEmail = user.email;
     const entity = { id: `rfnd_dash_${Date.now()}`, payment_id: razorpayId, amount: 30000, status: "processed" };
 
     assert.equal((await webhook("refund.created", { ...entity, status: "pending" })).status, 200);
@@ -198,6 +265,7 @@ describe("refunds made in the Razorpay dashboard", () => {
 
     const notes = (await api("/notifications/feed?category=payment", { token })).body.data.items;
     assert.equal(notes.filter((n) => n.title === "Refund initiated").length, 1);
+    assert.equal(mailCountTo(userEmail, "refund"), 1, "one email, however many times Razorpay repeats the event");
     const [row] = await sql(`SELECT status, source FROM payment_refunds WHERE razorpay_refund_id = $1`, [entity.id]);
     assert.deepEqual([row.status, row.source], ["processed", "dashboard"]);
   });

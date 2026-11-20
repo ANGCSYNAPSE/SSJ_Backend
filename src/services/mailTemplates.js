@@ -123,6 +123,41 @@ export function welcomeEmail({ fullName, paid, balance, receipt, siteUrl }) {
   };
 }
 
+/** Tells a member a refund has been started (or recorded, for a payment taken outside Razorpay). */
+export function refundEmail({ fullName, amount, refundId, paid, balance, manual, siteUrl }) {
+  const how = manual
+    ? "The Shyam Jagat team has recorded this refund. The money is returned to you directly by the team, using the way you paid us."
+    : "The money is going back to the same card, UPI or bank account you paid from. It usually reaches you within 5 to 7 working days, depending on your bank.";
+  return {
+    subject: `Your Shyam Jagat refund of ${rupees(amount)} has been started`,
+    text: `Hi ${fullName},
+
+A refund of ${rupees(amount)} has been started for your Shyam Jagat registration fee.
+${how}
+${refundId ? `Refund reference: ${refundId}\n` : ""}
+Registration fee paid now: ${rupees(paid)}${balance > 0 ? `\nBalance still to pay: ${rupees(balance)}` : ""}
+
+If you do not see the money after 10 working days, reply to this email with the reference above.
+Refund policy: ${siteUrl}/refund-policy
+
+Jai Shri Shyam`,
+    html: layout({
+      preheader: `A refund of ${rupees(amount)} has been started`,
+      title: "Your refund has been started",
+      bodyHtml: `
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Hi ${esc(fullName)}, a refund of <b>${rupees(amount)}</b> has been started for your registration fee.</p>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="6" style="font-size:14px;border-top:1px solid #ecd9b0;border-bottom:1px solid #ecd9b0;">
+          <tr><td style="color:#8a8580;">Refund amount</td><td align="right"><b>${rupees(amount)}</b></td></tr>
+          ${refundId ? `<tr><td style="color:#8a8580;">Reference</td><td align="right">${esc(refundId)}</td></tr>` : ""}
+          <tr><td style="color:#8a8580;">Registration fee paid now</td><td align="right"><b>${rupees(paid)}</b></td></tr>
+          ${balance > 0 ? `<tr><td style="color:#8a8580;">Balance still to pay</td><td align="right"><b style="color:#dc2626;">${rupees(balance)}</b></td></tr>` : ""}
+        </table>
+        <p style="margin:14px 0 0;padding:12px 14px;background:#fff8ec;border-left:4px solid #e87722;font-size:14px;line-height:1.5;">${esc(how)}</p>
+        <p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#8a8580;">If you do not see the money after 10 working days, reply to this email with the reference above. You can read our <a href="${esc(siteUrl)}/refund-policy" style="color:#e87722;">refund policy</a> any time.</p>`,
+    }),
+  };
+}
+
 export function passwordResetEmail({ fullName, resetUrl, minutes }) {
   return {
     subject: "Reset your Shyam Jagat password",

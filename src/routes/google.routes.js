@@ -62,7 +62,7 @@ googleRouter.post(
     const found = bySub ? await UserModel.findById(bySub.id) : await UserModel.findByEmail(profile.email);
 
     if (found) {
-      if (found.role === "admin") throw ApiError.forbidden("Admin accounts sign in with their email and password.");
+      if (found.role === "admin") throw ApiError.forbidden("This email belongs to an administrator account, and for security administrators cannot use Google. Please sign in with your email and password, or use a different Google account.");
       if (found.isBlocked) throw ApiError.forbidden("This account has been suspended. Please contact support.");
 
       const [{ google_sub: linked }] = await sql(`SELECT google_sub FROM users WHERE id = $1`, [found.id]);

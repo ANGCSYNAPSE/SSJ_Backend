@@ -1,6 +1,6 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { api, cleanup, cookieFrom, createUser, lastMailTo, makeIdentity, payPending, sql, startServer, startSignup, stopServer } from "./helpers.js";
+import { api, cleanup, cookieFrom, createUser, lastMailTo, makeIdentity, payPending, sql, startAndVerify, startServer, startSignup, stopServer } from "./helpers.js";
 
 const { setGoogleVerifierForTests } = await import("../src/services/google.service.js");
 const { ApiError } = await import("../src/utils/ApiError.js");
@@ -178,6 +178,44 @@ describe("sign up with Google", () => {
     const second = await start(credential, mobile);
     assert.equal(second.status, 200);
     assert.equal(second.body.data.pendingId, first.body.data.pendingId);
+  });
+});
+
+describe("deleting an account lets the same person start again from nothing", () => {
+  it("a deleted Google account is not resumed at the payment step", async () => {
+    const credential = cred();
+    const profile = JSON.parse(credential);
+    const started = await start(credential, newMobile());
+    const pendingId = started.body.data.pendingId;
+    await api("/auth/signup/profile", { body: { pendingId, profile: { city: "Jaipur", state: "Rajasthan" } } });
+    const paid = await payPending(pendingId, 501);
+    assert.equal(paid.done.status, 201);
+
+    // The account is removed from the database (as an admin or developer might do).
+    await sql(`DELETE FROM users WHERE id = $1`, [paid.done.body.data.user.id]);
+    assert.equal((await sql(`SELECT COUNT(*)::int AS n FROM pending_signups WHERE lower(email) = $1`, [profile.email]))[0].n, 0, "its finished signup record goes too");
+
+    const again = await signIn(credential);
+    assert.equal(again.status, 200);
+    assert.ok(again.body.data.newAccount, "a brand-new person: no resume, nothing carried over");
+    assert.equal(again.body.data.resume, undefined);
+    const restarted = await start(credential, newMobile());
+    assert.equal(restarted.body.data.stage, "details", "starts at the details step again, not at payment");
+    assert.equal(restarted.body.data.fee.paid, 0);
+  });
+
+  it("the same for someone who signed up with an email and password", async () => {
+    const { who, pendingId } = await startAndVerify(TAG);
+    await api("/auth/signup/profile", { body: { pendingId, profile: { city: "Jaipur", state: "Rajasthan" } } });
+    const paid = await payPending(pendingId, 501);
+    assert.equal(paid.done.status, 201);
+    await sql(`DELETE FROM users WHERE id = $1`, [paid.done.body.data.user.id]);
+
+    const again = await startSignup(who);
+    assert.equal(again.status, 200);
+    assert.equal(again.body.data.stage, "otp", "the email has to be verified again");
+    assert.equal(again.body.data.emailVerified, false);
+    assert.notEqual(again.body.data.pendingId, pendingId);
   });
 });
 
