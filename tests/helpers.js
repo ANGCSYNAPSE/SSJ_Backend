@@ -19,7 +19,12 @@ process.env.ALLOW_DIRECT_SIGNUP = "false";
 // A cheap password hash keeps the suite fast; the production default (12) is untouched.
 process.env.BCRYPT_ROUNDS = "4";
 
+import "dotenv/config";
 import crypto from "node:crypto";
+
+// A separate database for tests keeps their "Auto Test" people out of the real admin. Without TEST_DATABASE_URL the
+// tests use DATABASE_URL and clean up after themselves (npm run clean:test-data removes anything left behind).
+if (process.env.TEST_DATABASE_URL) process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 
 import { once } from "node:events";
 import bcrypt from "bcryptjs";

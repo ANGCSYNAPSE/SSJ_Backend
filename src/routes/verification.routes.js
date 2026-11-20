@@ -23,9 +23,9 @@ const bulkSchema = z.object({ userIds: z.array(z.string().uuid()).min(1).max(200
 
 const PAID = "(SELECT COALESCE(SUM(p.net_amount_in_rupees), 0) FROM registration_payments p WHERE p.user_id = u.id AND p.status = 'paid')";
 
-const ITEM_SELECT = `SELECT u.id, u.role, u.full_name, u.email, u.mobile, u.location, u.is_verified, u.is_blocked, u.verified_at, u.email_verified_at, u.mobile_verified_at, u.created_at,
+const ITEM_SELECT = `SELECT u.id, u.role, u.full_name, u.email, u.mobile, u.location, u.is_verified, u.is_blocked, u.verified_at, u.email_verified_at, u.mobile_verified_at, (u.google_sub IS NOT NULL) AS google_linked, u.created_at,
               ${PAID} AS paid,
-              COALESCE((SELECT json_agg(json_build_object('type', r.type::text, 'status', r.status::text, 'name', r.display_name, 'complete', r.is_complete, 'missing', jsonb_array_length(r.missing_fields)) ORDER BY r.created_at)
+              COALESCE((SELECT json_agg(json_build_object('id', r.id::text, 'type', r.type::text, 'status', r.status::text, 'name', r.display_name, 'complete', r.is_complete, 'missing', jsonb_array_length(r.missing_fields)) ORDER BY r.created_at)
                           FROM all_registrations r WHERE r.user_id = u.id), '[]'::json) AS registrations,
               vb.full_name AS verified_by
          FROM users u LEFT JOIN users vb ON vb.id = u.verified_by`;
@@ -42,6 +42,7 @@ const toItem = (row) => ({
   emailVerifiedAt: row.email_verified_at,
   mobileVerified: Boolean(row.mobile_verified_at),
   mobileVerifiedAt: row.mobile_verified_at,
+  googleLinked: Boolean(row.google_linked),
   verifiedAt: row.verified_at,
   verifiedBy: row.verified_by,
   createdAt: row.created_at,
