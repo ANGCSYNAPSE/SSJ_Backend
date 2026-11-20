@@ -144,6 +144,12 @@ export async function api(path, { method, body, token, cookie, headers = {} } = 
   return { status: res.status, body: await res.json().catch(() => null), setCookie };
 }
 
+/** A raw (non-JSON) answer, for downloads such as PDFs: { status, headers, buffer }. */
+export async function raw(path, { token } = {}) {
+  const res = await realFetch(base + path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  return { status: res.status, headers: res.headers, buffer: Buffer.from(await res.arrayBuffer()) };
+}
+
 /** "ssj_refresh=<token>" from a Set-Cookie header, ready to send back as a Cookie header. */
 export const cookieFrom = (setCookie) => setCookie?.split(";")[0] ?? null;
 export const tokenFrom = (setCookie) => cookieFrom(setCookie)?.split("=")[1] ?? null;
