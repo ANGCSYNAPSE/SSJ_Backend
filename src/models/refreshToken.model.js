@@ -50,6 +50,13 @@ export const RefreshTokens = {
       // A token ended on purpose (logout, password change) is simply refused: it must not sign out the
       // person's other devices, least of all the one that just changed the password.
       if (row.replaced_by) {
+        const ageMs = Date.now() - new Date(row.revoked_at).getTime();
+        if (ageMs <= env.jwt.reuseGraceSeconds * 1000 && new Date(row.expires_at) > new Date()) {
+          // The same browser asked twice at the same moment (the first request swapped the token a moment ago).
+          // That is not theft: give this request its own fresh token and leave the sessions alone.
+          const next = await this.issue({ id: row.user_id }, { remember: row.remember, ...context });
+          return { userId: row.user_id, remember: row.remember, token: next };
+        }
         await this.revokeAllForUser(row.user_id);
         return { reused: true };
       }

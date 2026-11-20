@@ -25,6 +25,8 @@ after(async () => {
 });
 
 const rowsOf = (userId) => sql(`SELECT * FROM refresh_tokens WHERE user_id = $1 ORDER BY created_at`, [userId]);
+/** Pretends the token swaps happened a minute ago, past the short grace window for a double request. */
+const ageSwaps = (userId) => sql(`UPDATE refresh_tokens SET revoked_at = NOW() - INTERVAL '1 minute' WHERE user_id = $1 AND replaced_by IS NOT NULL`, [userId]);
 
 describe("token lifetimes", () => {
   it("reads TTLs like 7d, 1d, 12h, 30m, 90s and plain seconds", () => {
@@ -129,6 +131,7 @@ describe("refresh tokens are stored, hashed, in their own table", () => {
     const refreshed = await api("/auth/refresh", { method: "POST", cookie: oldCookie });
     const newCookie = cookieFrom(refreshed.setCookie);
 
+    await ageSwaps(user.id);
     const replay = await api("/auth/refresh", { method: "POST", cookie: oldCookie });
     assert.equal(replay.status, 401);
 
@@ -136,6 +139,30 @@ describe("refresh tokens are stored, hashed, in their own table", () => {
     assert.equal((await api("/auth/refresh", { method: "POST", cookie: newCookie })).status, 401);
     const live = (await rowsOf(user.id)).filter((r) => !r.revoked_at);
     assert.equal(live.length, 0);
+  });
+
+  it("two requests with the same cookie at the same moment are the same person, not theft", async () => {
+    const user = await createUser(TAG);
+    const cookie = cookieFrom((await login(user)).setCookie);
+
+    // a page that loads twice (React's development double render, two tabs) sends the same cookie twice
+    const [a, b] = await Promise.all([api("/auth/refresh", { method: "POST", cookie }), api("/auth/refresh", { method: "POST", cookie })]);
+    assert.equal(a.status, 200);
+    assert.equal(b.status, 200, "the second one is not treated as a stolen token");
+    assert.ok(a.body.data.accessToken && b.body.data.accessToken);
+
+    // and whichever cookie the browser ends up with keeps working
+    for (const res of [a, b]) assert.equal((await api("/auth/refresh", { method: "POST", cookie: cookieFrom(res.setCookie) })).status, 200);
+    assert.ok((await rowsOf(user.id)).some((r) => !r.revoked_at), "the session is still alive");
+  });
+
+  it("a replay long after the swap is still theft", async () => {
+    const user = await createUser(TAG);
+    const oldCookie = cookieFrom((await login(user)).setCookie);
+    await api("/auth/refresh", { method: "POST", cookie: oldCookie });
+    await ageSwaps(user.id);
+    assert.equal((await api("/auth/refresh", { method: "POST", cookie: oldCookie })).status, 401);
+    assert.equal((await rowsOf(user.id)).filter((r) => !r.revoked_at).length, 0);
   });
 
   it("two devices have two independent sessions", async () => {
@@ -247,7 +274,8 @@ describe("a token that was ended on purpose does not take the person's other ses
     const refreshed = await api("/auth/refresh", { method: "POST", cookie: phoneCookie });
     assert.equal(refreshed.status, 200);
 
-    // someone replays the swapped-out token: refused, and every session of the user ends
+    // someone replays the swapped-out token a while later: refused, and every session of the user ends
+    await ageSwaps(user.id);
     assert.equal((await api("/auth/refresh", { method: "POST", cookie: phoneCookie })).status, 401);
     assert.equal((await api("/auth/refresh", { method: "POST", cookie: cookieFrom(tablet.setCookie) })).status, 401);
   });

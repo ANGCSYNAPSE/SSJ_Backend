@@ -233,6 +233,55 @@ describe("admin refunds", () => {
     }
   });
 
+  it("refunds everything a person paid across several payments, newest first, with one message", async () => {
+    const admin = await adminToken();
+    const user = await createUser(TAG);
+    const token = await tokenOf(user);
+    // two payments: 600 then 500
+    for (const amount of [600, 500]) {
+      const order = await api("/payments/registration/order", { token, body: { amount } });
+      const { orderId } = order.body.data;
+      const razorpayId = `pay_rfd_multi_${Date.now()}_${amount}`;
+      registerPayment(razorpayId, { orderId, amount: order.body.data.amount });
+      await api("/payments/registration/verify", { token, body: { razorpay_order_id: orderId, razorpay_payment_id: razorpayId, razorpay_signature: signPayment(orderId, razorpayId) } });
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    assert.equal((await feeOf(token)).paid, 1100);
+    const before = mailCountTo(user.email, "refund");
+
+    const res = await api("/admin/payments/refund-fee", { token: admin, body: { userId: user.id, reason: "Whole fee back" } });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.data.total, 1100);
+    assert.equal(res.body.data.refunds.length, 2);
+    assert.deepEqual(res.body.data.refunds.map((r) => r.amount), [500, 600], "newest payment first");
+    assert.equal((await feeOf(token)).paid, 0);
+    assert.equal(mailCountTo(user.email, "refund") - before, 1, "one combined email, not one per payment");
+    assert.match(lastMailTo(user.email).subject, /refund of ₹1,100/i);
+
+    const again = await api("/admin/payments/refund-fee", { token: admin, body: { userId: user.id, reason: "Again" } });
+    assert.equal(again.status, 400);
+    assert.match(again.body.message, /nothing left to refund/i);
+  });
+
+  it("a partial refund across payments takes from the newest first and never more than was paid", async () => {
+    const admin = await adminToken();
+    const user = await createUser(TAG);
+    const token = await tokenOf(user);
+    for (const amount of [600, 500]) {
+      const order = await api("/payments/registration/order", { token, body: { amount } });
+      const { orderId } = order.body.data;
+      const razorpayId = `pay_rfd_part_${Date.now()}_${amount}`;
+      registerPayment(razorpayId, { orderId, amount: order.body.data.amount });
+      await api("/payments/registration/verify", { token, body: { razorpay_order_id: orderId, razorpay_payment_id: razorpayId, razorpay_signature: signPayment(orderId, razorpayId) } });
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    assert.equal((await api("/admin/payments/refund-fee", { token: admin, body: { userId: user.id, amount: 1101, reason: "Too much" } })).status, 400);
+    const res = await api("/admin/payments/refund-fee", { token: admin, body: { userId: user.id, amount: 700, reason: "Part" } });
+    assert.deepEqual(res.body.data.refunds.map((r) => r.amount), [500, 200]);
+    assert.equal((await feeOf(token)).paid, 400);
+    assert.equal((await api("/admin/payments/refund-fee", { token: await tokenOf(user), body: { userId: user.id, reason: "Me" } })).status, 403);
+  });
+
   it("refunds show in the totals and the payments list", async () => {
     const { id } = await paidMember(501);
     const admin = await adminToken();

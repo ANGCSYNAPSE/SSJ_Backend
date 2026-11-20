@@ -28,6 +28,7 @@ import {
   adminPendingQuerySchema,
   manualPaymentSchema,
   refundSchema,
+  refundFeeSchema,
   registrationOrderSchema,
   verifyRegistrationPaymentSchema,
 } from "../validators/payments.validator.js";
@@ -384,6 +385,47 @@ registrationWebhookRouter.post(
  *     responses:
  *       200: { description: "[{ id, refundId, amount, status, source, reason, createdAt, by }]" }
  */
+/**
+ * Refunds `amount` of one paid payment: through Razorpay for a real online payment, or only in the records for an
+ * offline one or a leftover test payment. Returns what happened; the person is told once, unless `notify` is false
+ * (a refund across several payments sends one combined message instead).
+ */
+async function refundOnePayment(row, amount, reason, adminId, { notify = true } = {}) {
+  // Leftovers of the old dummy checkout (pay_mock_... / order_mock_...) never existed at Razorpay, so there is
+  // nothing to refund there: the refund is only recorded here.
+  const isMock = /^pay_mock_/.test(row.razorpayPaymentId ?? "") || /^order_mock_/.test(row.razorpayOrderId ?? "");
+
+  let refundId = null;
+  let status = "processed";
+  if (row.source === "razorpay" && !isMock) {
+    if (!row.razorpayPaymentId) throw ApiError.badRequest("This payment has no Razorpay payment id, so it cannot be refunded through Razorpay.");
+    const refund = await refundRazorpayPayment({
+      paymentId: row.razorpayPaymentId,
+      amountInPaise: Math.round(amount * 100),
+      notes: { app: PAYMENT_APP, purpose: "registration_fee_refund", reason: reason.slice(0, 200) },
+      receipt: `SJ-RFD-${Date.now().toString(36)}`,
+    });
+    refundId = refund.id;
+    status = refund.status;
+  }
+
+  const { inserted } = await RegistrationPaymentModel.recordRefund({
+    paymentId: row.id,
+    refundId,
+    amount,
+    status,
+    source: row.source === "razorpay" && !isMock ? "admin" : "manual",
+    reason,
+    createdBy: adminId,
+  });
+  if (inserted && notify) await notifyRefund(row, amount, refundId, { manual: row.source !== "razorpay" });
+  else if (!inserted && refundId && status !== "pending") await RegistrationPaymentModel.settleRefund(refundId, status);
+
+  return { refundId, status, isMock };
+}
+
+const leftOf = (row) => Math.round((Number(row.amountInRupees) - Number(row.refundedAmount ?? 0)) * 100) / 100;
+
 adminPaymentsRouter.post(
   "/:id/refund",
   validate(refundSchema),
@@ -392,41 +434,12 @@ adminPaymentsRouter.post(
     if (!row) throw ApiError.notFound("Payment not found.");
     if (row.status !== "paid") throw ApiError.badRequest("Only a payment that was received can be refunded.");
 
-    const paid = Number(row.amountInRupees);
-    const left = Math.round((paid - Number(row.refundedAmount ?? 0)) * 100) / 100;
+    const left = leftOf(row);
     if (left <= 0) throw ApiError.badRequest("This payment has already been fully refunded.");
     const amount = req.validated.amount ?? left;
     if (amount > left) throw ApiError.badRequest(`At most ₹${left.toLocaleString("en-IN")} can still be refunded on this payment.`);
 
-    // Leftovers of the old dummy checkout (pay_mock_... / order_mock_...) never existed at Razorpay, so there is
-    // nothing to refund there: the refund is only recorded here.
-    const isMock = /^pay_mock_/.test(row.razorpayPaymentId ?? "") || /^order_mock_/.test(row.razorpayOrderId ?? "");
-
-    let refundId = null;
-    let status = "processed";
-    if (row.source === "razorpay" && !isMock) {
-      if (!row.razorpayPaymentId) throw ApiError.badRequest("This payment has no Razorpay payment id, so it cannot be refunded through Razorpay.");
-      const refund = await refundRazorpayPayment({
-        paymentId: row.razorpayPaymentId,
-        amountInPaise: Math.round(amount * 100),
-        notes: { app: PAYMENT_APP, purpose: "registration_fee_refund", reason: req.validated.reason.slice(0, 200) },
-        receipt: `SJ-RFD-${Date.now().toString(36)}`,
-      });
-      refundId = refund.id;
-      status = refund.status;
-    }
-
-    const { inserted } = await RegistrationPaymentModel.recordRefund({
-      paymentId: row.id,
-      refundId,
-      amount,
-      status,
-      source: row.source === "razorpay" && !isMock ? "admin" : "manual",
-      reason: req.validated.reason,
-      createdBy: req.user.id,
-    });
-    if (inserted) await notifyRefund(row, amount, refundId, { manual: row.source !== "razorpay" });
-    else if (refundId && status !== "pending") await RegistrationPaymentModel.settleRefund(refundId, status);
+    const { refundId, status, isMock } = await refundOnePayment(row, amount, req.validated.reason, req.user.id);
 
     const updated = await RegistrationPaymentModel.findById(row.id);
     const fee = await feeStatusFor(row.userId);
@@ -441,6 +454,66 @@ adminPaymentsRouter.post(
         // The person has fallen below the minimum fee: the admin may want to un-verify or message them.
         belowMinimum: fee.paid < fee.minimum,
       },
+    });
+  }),
+);
+
+/**
+ * @openapi
+ * /api/v1/admin/payments/refund-fee:
+ *   post:
+ *     tags: [Payments]
+ *     summary: Refund some or all of everything one person has paid, across their payments (admin)
+ *     description: "Body: { userId, amount?, reason }. Leave amount out to refund everything still refundable. The refund is taken from their newest payments first, each refunded the same way a single payment is. The person gets one combined message."
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: "{ refunds[], total, fee, belowMinimum }" }
+ *       400: { description: Nothing to refund, too much asked, or Razorpay refused part-way (what was done stays done) }
+ */
+adminPaymentsRouter.post(
+  "/refund-fee",
+  validate(refundFeeSchema),
+  asyncHandler(async (req, res) => {
+    const { userId, reason } = req.validated;
+    const payments = (await RegistrationPaymentModel.listForUser(userId))
+      .filter((p) => p.status === "paid" && leftOf(p) > 0)
+      .sort((x, y) => new Date(y.paidAt ?? y.createdAt) - new Date(x.paidAt ?? x.createdAt));
+    const totalLeft = Math.round(payments.reduce((sum, p) => sum + leftOf(p), 0) * 100) / 100;
+    if (totalLeft <= 0) throw ApiError.badRequest("There is nothing left to refund for this person.");
+    const amount = req.validated.amount ?? totalLeft;
+    if (amount > totalLeft) throw ApiError.badRequest(`At most ₹${totalLeft.toLocaleString("en-IN")} can still be refunded for this person.`);
+
+    // Newest payments first: each gives back what it can until the amount is covered.
+    const done = [];
+    let remaining = amount;
+    let stopped = null;
+    for (const payment of payments) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, leftOf(payment));
+      try {
+        const result = await refundOnePayment(payment, take, reason, req.user.id, { notify: false });
+        done.push({ paymentId: payment.id, amount: take, id: result.refundId, status: result.status, source: payment.source });
+        remaining = Math.round((remaining - take) * 100) / 100;
+      } catch (error) {
+        stopped = error;
+        break;
+      }
+    }
+
+    const refundedTotal = Math.round(done.reduce((sum, d) => sum + d.amount, 0) * 100) / 100;
+    if (refundedTotal > 0) {
+      // One message for the whole refund, not one per payment.
+      await notifyRefund({ id: done[0].paymentId, userId }, refundedTotal, `fee:${done[0].id ?? done[0].paymentId}:${done.length}`, { manual: done.every((d) => d.source !== "razorpay") });
+    }
+    if (stopped) {
+      if (done.length === 0) throw stopped;
+      throw ApiError.badRequest(`₹${refundedTotal.toLocaleString("en-IN")} was refunded on ${done.length} payment${done.length === 1 ? "" : "s"}, then it stopped: ${stopped.message} What was refunded stays refunded; you can try the rest again.`);
+    }
+
+    const fee = await feeStatusFor(userId);
+    sendSuccess(res, {
+      message: `Refund of ₹${refundedTotal.toLocaleString("en-IN")} started across ${done.length} payment${done.length === 1 ? "" : "s"}.`,
+      data: { refunds: done, total: refundedTotal, fee, belowMinimum: fee.paid < fee.minimum },
     });
   }),
 );

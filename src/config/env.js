@@ -24,6 +24,10 @@ export const env = {
     refreshSecret: required("JWT_REFRESH_SECRET"),
     accessTtl: process.env.JWT_ACCESS_TTL ?? "1d",
     refreshTtl: process.env.JWT_REFRESH_TTL ?? "7d",
+    // Two requests can carry the same refresh cookie at once (a page loading twice, two tabs, React's double render in
+    // development). The second one arrives just after the first swapped the token. Within this many seconds that is
+    // treated as the same person, not as a copied token.
+    reuseGraceSeconds: Number(process.env.REFRESH_REUSE_GRACE_SECONDS ?? 15),
   },
 
   // Comma-separated list of allowed browser origins. Trailing slashes are

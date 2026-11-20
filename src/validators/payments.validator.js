@@ -53,3 +53,10 @@ export const refundSchema = z.object({
   amount: z.number().positive().max(1_000_000).multipleOf(0.01).optional(),
   reason: z.string().trim().min(3, "Say why, so the record makes sense later.").max(200, "Keep the reason under 200 characters."),
 });
+
+/** An admin refund across ALL of one person's payments (newest first), e.g. "give back everything they paid". */
+export const refundFeeSchema = z.object({
+  userId: z.string().uuid(),
+  amount: z.number().positive().max(1_000_000).multipleOf(0.01).optional(),
+  reason: z.string().trim().min(3, "Say why, so the record makes sense later.").max(200, "Keep the reason under 200 characters."),
+});
