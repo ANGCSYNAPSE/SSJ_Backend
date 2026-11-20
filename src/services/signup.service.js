@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { sql } from "../config/database.js";
 import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
@@ -237,6 +237,74 @@ export const SignupService = {
     return { ...(await this.describe(pending)), sentBy };
   },
 
+  /**
+   * Google proved this email, so an unfinished signup with it can carry on without the password it was started
+   * with. Returns where to resume, or null when there is no such signup.
+   */
+  async resumeFromGoogle(profile) {
+    const [pending] = await sql(
+      `SELECT * FROM pending_signups WHERE lower(email) = lower($1) AND completed_user_id IS NULL AND expires_at > NOW()
+       ORDER BY created_at DESC LIMIT 1`,
+      [profile.email],
+    );
+    if (!pending) return null;
+    const [verified] = await sql(
+      `UPDATE pending_signups SET email_verified_at = COALESCE(email_verified_at, NOW()), google_sub = COALESCE(google_sub, $2) WHERE id = $1 RETURNING *`,
+      [pending.id, profile.sub],
+    );
+    await keepAlive(verified.id);
+    return { ...(await this.describe(verified)), sentBy: { email: false, sms: false } };
+  },
+
+  /**
+   * Begins a registration for someone who signed in with Google. Google has proved the email, so there is no
+   * password and no emailed code: it starts at the details step. They can set a password later from "Forgot
+   * password". The account itself is still only created after the minimum fee is paid.
+   */
+  async startWithGoogle({ profile, mobile }) {
+    const email = profile.email;
+    const [byEmail, byMobile] = await Promise.all([UserModel.findByEmail(email), UserModel.findByMobile(mobile)]);
+    const conflicts = [];
+    if (byEmail) conflicts.push({ field: "email", message: "An account with this email already exists. Please sign in with Google." });
+    if (byMobile) conflicts.push({ field: "mobile", message: "An account with this mobile number already exists. Please sign in." });
+    if (conflicts.length > 0) throw ApiError.conflict("This account already exists.", conflicts);
+
+    const [mobileHolder] = await sql(
+      `SELECT id FROM pending_signups WHERE mobile = $1 AND completed_user_id IS NULL AND lower(email) <> lower($2) AND expires_at > NOW() LIMIT 1`,
+      [mobile, email],
+    );
+    if (mobileHolder) {
+      throw ApiError.conflict("This mobile number is being used for another registration.", [
+        { field: "mobile", message: "This mobile number is being used for another registration." },
+      ]);
+    }
+
+    const [existing] = await sql(
+      `SELECT id FROM pending_signups WHERE lower(email) = lower($1) AND completed_user_id IS NULL ORDER BY created_at DESC LIMIT 1`,
+      [email],
+    );
+    let pending;
+    if (existing) {
+      [pending] = await sql(
+        `UPDATE pending_signups
+         SET mobile = $2, email_verified_at = COALESCE(email_verified_at, NOW()), google_sub = $3,
+             expires_at = NOW() + ($4 || ' days')::interval
+         WHERE id = $1 RETURNING *`,
+        [existing.id, mobile, profile.sub, String(PENDING_DAYS)],
+      );
+    } else {
+      // No password was chosen: the stored one is random and nobody knows it.
+      const unusablePassword = await bcrypt.hash(randomBytes(32).toString("hex"), env.bcryptRounds);
+      const fullName = profile.name.length >= 2 ? profile.name : email.split("@")[0].padEnd(2, "x");
+      [pending] = await sql(
+        `INSERT INTO pending_signups (full_name, email, mobile, password_hash, become_member, email_verified_at, google_sub)
+         VALUES ($1, $2, $3, $4, FALSE, NOW(), $5) RETURNING *`,
+        [fullName, email, mobile, unusablePassword, profile.sub],
+      );
+    }
+    return { ...(await this.describe(pending)), sentBy: { email: false, sms: false } };
+  },
+
   /** The saved details of a pending signup, for the screens that carry on from where the person stopped. */
   async describe(pending) {
     const fee = await feeOf(pending.id);
@@ -411,6 +479,13 @@ export const SignupService = {
       location: pending.category ? undefined : [pending.profile?.city, pending.profile?.state].filter(Boolean).join(", ") || undefined,
       emailVerified: true,
     });
+
+    // Signed up with Google: the account remembers it, so the next Google sign-in finds it.
+    if (pending.google_sub) {
+      await sql(`UPDATE users SET google_sub = $2 WHERE id = $1 AND google_sub IS NULL`, [result.user.id, pending.google_sub]).catch((error) =>
+        console.error("[google] could not link the new account:", error.message),
+      );
+    }
 
     // The payments made so far now belong to the new account.
     await sql(`UPDATE registration_payments SET user_id = $2 WHERE pending_signup_id = $1`, [pending.id, result.user.id]);

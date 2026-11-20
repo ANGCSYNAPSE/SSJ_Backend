@@ -9,6 +9,7 @@
 process.env.NODE_ENV = "test";
 process.env.SMTP_HOST = "";
 process.env.SMS_PROVIDER = "";
+process.env.GOOGLE_CLIENT_ID = "";
 process.env.RAZORPAY_KEY_ID = "rzp_test_autotest";
 process.env.RAZORPAY_KEY_SECRET = "autotest_key_secret";
 process.env.RAZORPAY_WEBHOOK_SECRET = "autotest_webhook_secret";

@@ -71,6 +71,11 @@ export const env = {
     provider: process.env.SMS_PROVIDER,
   },
 
+  // Sign in with Google: the OAuth client id (public; no secret is needed to check Google's ID tokens).
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+  },
+
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,
