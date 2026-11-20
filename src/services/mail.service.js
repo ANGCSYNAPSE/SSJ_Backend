@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import { env, isProduction } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
-import { passwordResetCodeEmail, passwordResetEmail, refundEmail, securityNoticeEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
+import { donationReceiptEmail, passwordResetCodeEmail, passwordResetEmail, paymentReceiptEmail, refundEmail, securityNoticeEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
 
 /** Test mode only: every email "sent" during a test run. */
 export const mailOutbox = [];
@@ -46,7 +46,17 @@ export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
 }
 
 export async function sendRefundEmail({ to, fullName, amount, refundId, paid, balance, manual }) {
-  const mail = refundEmail({ fullName, amount, refundId, paid, balance, manual, siteUrl: env.siteUrl });
+  const mail = refundEmail({ fullName, amount, refundId, paid, balance, manual, siteUrl: env.siteUrl, supportEmail: env.supportEmail });
+  await deliver({ to, ...mail }, {});
+}
+
+export async function sendPaymentReceiptEmail({ to, fullName, receiptNo, paidAt, amount, paymentRef, offline, note, total, paid, balance }) {
+  const mail = paymentReceiptEmail({ fullName, email: to, receiptNo, paidAt, amount, paymentRef, offline, note, total, paid, balance, siteUrl: env.siteUrl, supportEmail: env.supportEmail });
+  await deliver({ to, ...mail }, {});
+}
+
+export async function sendDonationReceiptEmail({ to, donorName, receiptNo, paidAt, amount, cause, paymentRef }) {
+  const mail = donationReceiptEmail({ donorName, receiptNo, paidAt, amount, cause, paymentRef, siteUrl: env.siteUrl, supportEmail: env.supportEmail });
   await deliver({ to, ...mail }, {});
 }
 

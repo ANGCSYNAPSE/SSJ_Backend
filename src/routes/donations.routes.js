@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { emailDonationReceipt } from "../services/receipt.service.js";
 import express from "express";
 import { env } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
@@ -167,6 +168,7 @@ donationsRouter.post(
         status: "paid",
         razorpayPaymentId: razorpay_payment_id,
       });
+      await emailDonationReceipt(donation.id); // once, even if the webhook reports it too
     }
 
     sendSuccess(res, { message: "Verified.", data: { verified: true } });
@@ -246,6 +248,7 @@ donationsWebhookRouter.post(
           status,
           razorpayPaymentId: paymentId ?? donation.razorpayPaymentId,
         });
+        if (status === "paid") await emailDonationReceipt(donation.id);
       }
     }
 

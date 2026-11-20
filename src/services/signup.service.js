@@ -11,6 +11,7 @@ import { PAYMENT_APP, PAYMENT_PURPOSE, allowedPayment, feeState, getRegistration
 import { PROFILE_SCHEMAS } from "../validators/profiles.validator.js";
 import { AuthService } from "./auth.service.js";
 import { sendSignupOtpEmail, sendWelcomeEmail } from "./mail.service.js";
+import { emailSignupReceipts } from "./receipt.service.js";
 import { sendSms, signupOtpText, smsConfigured } from "./sms.service.js";
 import { confirmPayment, createRazorpayOrder, verifyPaymentSignature } from "./razorpay.service.js";
 
@@ -511,6 +512,9 @@ export const SignupService = {
     sendWelcomeEmail({ to: user.email, fullName: user.fullName, paid: fee.paid, balance: fee.balance, receipt }).catch((error) =>
       console.error("[mail] welcome email failed:", error.message),
     );
+
+    // The receipt for what was paid at signup (the account did not exist yet when the payment was made).
+    await emailSignupReceipts(pending.id);
 
     return { user, accessToken: result.accessToken };
   },

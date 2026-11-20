@@ -21,6 +21,7 @@ import {
 } from "../config/plans.js";
 import { env, isProduction } from "../config/env.js";
 import { sendRefundEmail } from "../services/mail.service.js";
+import { emailRegistrationReceipt } from "../services/receipt.service.js";
 import {
   feeSettingsSchema,
   adminPaymentsQuerySchema,
@@ -60,6 +61,8 @@ async function notifyPaid(row) {
     link: "/profile",
     dedupeKey: `payment:${row.razorpayOrderId}`,
   });
+  // And the receipt by email, once per payment (the browser, the webhook and a reconcile may all report it).
+  await emailRegistrationReceipt(row.id);
 }
 
 /** "Refund on its way": a note in the person's bell and an email, once per refund. */
@@ -422,15 +425,14 @@ adminPaymentsRouter.post(
       reason: req.validated.reason,
       createdBy: req.user.id,
     });
-    // A test payment's refund is a bookkeeping entry: nobody is told, since no real money moved.
-    if (inserted && !isMock) await notifyRefund(row, amount, refundId, { manual: row.source !== "razorpay" });
+    if (inserted) await notifyRefund(row, amount, refundId, { manual: row.source !== "razorpay" });
     else if (refundId && status !== "pending") await RegistrationPaymentModel.settleRefund(refundId, status);
 
     const updated = await RegistrationPaymentModel.findById(row.id);
     const fee = await feeStatusFor(row.userId);
     sendSuccess(res, {
       message: isMock
-        ? `Refund of ₹${amount.toLocaleString("en-IN")} recorded. This was a test payment from the old dummy checkout, so nothing was sent to Razorpay.`
+        ? `Refund of ₹${amount.toLocaleString("en-IN")} recorded. This was a test payment from the old dummy checkout, so nothing was sent to Razorpay; the member was notified.`
         : row.source === "razorpay" ? `Refund of ₹${amount.toLocaleString("en-IN")} started. The customer receives it in 5 to 7 working days.` : `Refund of ₹${amount.toLocaleString("en-IN")} recorded.`,
       data: {
         payment: money(updated),

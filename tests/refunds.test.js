@@ -196,7 +196,7 @@ describe("admin refunds", () => {
     assert.equal(log.source, "manual");
   });
 
-  it("a leftover test payment from the old dummy checkout is refunded in the records only, and the member is not emailed", async () => {
+  it("a leftover test payment from the old dummy checkout is refunded in the records only, and the member is still told", async () => {
     const admin = await adminToken();
     const user = await createUser(TAG);
     const [row] = await sql(
@@ -214,7 +214,7 @@ describe("admin refunds", () => {
       setRazorpayDown(false);
     }
     assert.equal((await feeOf(await tokenOf(user))).paid, 200);
-    assert.equal(mailCountTo(user.email, "refund"), 0);
+    assert.equal(mailCountTo(user.email, "refund"), 1, "the member is told, so the whole flow can be tried end to end");
     const [log] = (await api(`/admin/payments/${row.id}/refunds`, { token: admin })).body.data;
     assert.equal(log.source, "manual");
   });

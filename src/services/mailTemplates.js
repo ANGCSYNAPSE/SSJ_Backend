@@ -123,8 +123,100 @@ export function welcomeEmail({ fullName, paid, balance, receipt, siteUrl }) {
   };
 }
 
+const when = (iso) =>
+  new Date(iso ?? Date.now()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
+
+const row = (label, value, strong = false) =>
+  `<tr><td style="color:#8a8580;vertical-align:top;">${esc(label)}</td><td align="right" style="vertical-align:top;">${strong ? "<b>" : ""}${esc(value)}${strong ? "</b>" : ""}</td></tr>`;
+
+/** An invoice-style receipt for a registration-fee payment. */
+export function paymentReceiptEmail({ fullName, email, receiptNo, paidAt, amount, paymentRef, offline, note, total, paid, balance, siteUrl, supportEmail }) {
+  const method = offline ? `Recorded by the Shyam Jagat team${note ? ` (${note})` : ""}` : paymentRef ? `Online via Razorpay (${paymentRef})` : "Online via Razorpay";
+  return {
+    subject: `Payment receipt ${receiptNo} - ${rupees(amount)} received`,
+    text: `Hi ${fullName},
+
+Thank you. We have received your registration fee payment.
+
+PAYMENT RECEIPT
+Receipt no: ${receiptNo}
+Date: ${when(paidAt)}
+Billed to: ${fullName} (${email})
+Description: Registration fee
+Payment: ${method}
+Amount paid: ${rupees(amount)}
+
+Registration fee: ${rupees(total)}
+Paid so far: ${rupees(paid)}
+${balance > 0 ? `Balance still to pay: ${rupees(balance)}` : "Your registration fee is paid in full."}
+
+${balance > 0 ? `You can pay the balance any time from your profile: ${siteUrl}/profile\n\n` : ""}This is a computer-generated receipt and needs no signature. Questions? Write to ${supportEmail}.
+Refund policy: ${siteUrl}/refund-policy
+
+Jai Shri Shyam`,
+    html: layout({
+      preheader: `Receipt ${receiptNo}: ${rupees(amount)} received`,
+      title: "Payment receipt",
+      bodyHtml: `
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Hi ${esc(fullName)}, thank you. We have received your registration fee payment.</p>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="6" style="font-size:14px;border-top:2px solid #e87722;border-bottom:1px solid #ecd9b0;">
+          ${row("Receipt no", receiptNo, true)}
+          ${row("Date", when(paidAt))}
+          ${row("Billed to", `${fullName} (${email})`)}
+          ${row("Description", "Registration fee")}
+          ${row("Payment", method)}
+          <tr><td style="color:#3e1815;border-top:1px solid #ecd9b0;"><b>Amount paid</b></td><td align="right" style="border-top:1px solid #ecd9b0;font-size:18px;"><b>${rupees(amount)}</b></td></tr>
+        </table>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="6" style="font-size:14px;margin-top:14px;">
+          ${row("Registration fee", rupees(total))}
+          ${row("Paid so far", rupees(paid))}
+          ${balance > 0 ? `<tr><td style="color:#8a8580;">Balance still to pay</td><td align="right"><b style="color:#dc2626;">${rupees(balance)}</b></td></tr>` : ""}
+        </table>
+        <p style="margin:14px 0 0;padding:12px 14px;background:${balance > 0 ? "#fff8ec" : "#f0fbf3"};border-left:4px solid ${balance > 0 ? "#e87722" : "#16a34a"};font-size:14px;line-height:1.5;">${balance > 0 ? `A balance of <b>${rupees(balance)}</b> is still pending. You can pay it any time from your profile.` : "Your registration fee is paid in full. Thank you!"}</p>
+        ${balance > 0 ? `<p style="margin:18px 0 0;text-align:center;"><a href="${esc(siteUrl)}/profile" style="display:inline-block;background:#e87722;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 28px;border-radius:10px;">Pay the balance</a></p>` : ""}
+        <p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#8a8580;text-align:center;">This is a computer-generated receipt and needs no signature.<br>Questions? Write to <a href="mailto:${esc(supportEmail)}" style="color:#e87722;">${esc(supportEmail)}</a>. <a href="${esc(siteUrl)}/refund-policy" style="color:#e87722;">Refund policy</a></p>`,
+    }),
+  };
+}
+
+/** A thank-you with a receipt for a donation. */
+export function donationReceiptEmail({ donorName, receiptNo, paidAt, amount, cause, paymentRef, siteUrl, supportEmail }) {
+  return {
+    subject: `Thank you for your donation of ${rupees(amount)} - receipt ${receiptNo}`,
+    text: `Dear ${donorName},
+
+Thank you for your generous donation to Shyam Jagat. Your seva makes a real difference.
+
+DONATION RECEIPT
+Receipt no: ${receiptNo}
+Date: ${when(paidAt)}
+Cause: ${cause}
+Payment: Online via Razorpay${paymentRef ? ` (${paymentRef})` : ""}
+Amount: ${rupees(amount)}
+
+This is a computer-generated receipt and needs no signature. Questions? Write to ${supportEmail}.
+Refund policy: ${siteUrl}/refund-policy
+
+Jai Shri Shyam`,
+    html: layout({
+      preheader: `Thank you for your donation of ${rupees(amount)}`,
+      title: "Thank you for your donation 🙏",
+      bodyHtml: `
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Dear ${esc(donorName)}, thank you for your generous donation. Your seva makes a real difference.</p>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="6" style="font-size:14px;border-top:2px solid #e87722;border-bottom:1px solid #ecd9b0;">
+          ${row("Receipt no", receiptNo, true)}
+          ${row("Date", when(paidAt))}
+          ${row("Cause", cause)}
+          ${row("Payment", paymentRef ? `Online via Razorpay (${paymentRef})` : "Online via Razorpay")}
+          <tr><td style="color:#3e1815;border-top:1px solid #ecd9b0;"><b>Amount donated</b></td><td align="right" style="border-top:1px solid #ecd9b0;font-size:18px;"><b>${rupees(amount)}</b></td></tr>
+        </table>
+        <p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#8a8580;text-align:center;">This is a computer-generated receipt and needs no signature.<br>Questions? Write to <a href="mailto:${esc(supportEmail)}" style="color:#e87722;">${esc(supportEmail)}</a>. <a href="${esc(siteUrl)}/refund-policy" style="color:#e87722;">Refund policy</a></p>`,
+    }),
+  };
+}
+
 /** Tells a member a refund has been started (or recorded, for a payment taken outside Razorpay). */
-export function refundEmail({ fullName, amount, refundId, paid, balance, manual, siteUrl }) {
+export function refundEmail({ fullName, amount, refundId, paid, balance, manual, siteUrl, supportEmail }) {
   const how = manual
     ? "The Shyam Jagat team has recorded this refund. The money is returned to you directly by the team, using the way you paid us."
     : "The money is going back to the same card, UPI or bank account you paid from. It usually reaches you within 5 to 7 working days, depending on your bank.";
@@ -137,7 +229,7 @@ ${how}
 ${refundId ? `Refund reference: ${refundId}\n` : ""}
 Registration fee paid now: ${rupees(paid)}${balance > 0 ? `\nBalance still to pay: ${rupees(balance)}` : ""}
 
-If you do not see the money after 10 working days, reply to this email with the reference above.
+If you do not see the money after 10 working days, write to ${supportEmail} with the reference above.
 Refund policy: ${siteUrl}/refund-policy
 
 Jai Shri Shyam`,
@@ -153,7 +245,7 @@ Jai Shri Shyam`,
           ${balance > 0 ? `<tr><td style="color:#8a8580;">Balance still to pay</td><td align="right"><b style="color:#dc2626;">${rupees(balance)}</b></td></tr>` : ""}
         </table>
         <p style="margin:14px 0 0;padding:12px 14px;background:#fff8ec;border-left:4px solid #e87722;font-size:14px;line-height:1.5;">${esc(how)}</p>
-        <p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#8a8580;">If you do not see the money after 10 working days, reply to this email with the reference above. You can read our <a href="${esc(siteUrl)}/refund-policy" style="color:#e87722;">refund policy</a> any time.</p>`,
+        <p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#8a8580;">If you do not see the money after 10 working days, write to <a href="mailto:${esc(supportEmail)}" style="color:#e87722;">${esc(supportEmail)}</a> with the reference above. You can read our <a href="${esc(siteUrl)}/refund-policy" style="color:#e87722;">refund policy</a> any time.</p>`,
     }),
   };
 }
