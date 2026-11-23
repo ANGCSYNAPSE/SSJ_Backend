@@ -17,6 +17,7 @@ import { UserModel } from "../models/user.model.js";
 import { NotificationModel } from "../models/notification.model.js";
 import { findProfileByUser, listProfilesForUser } from "../models/profile.model.js";
 import { feeStatusFor } from "./payments.routes.js";
+import { VolunteerModel, toVolunteer } from "../models/volunteer.model.js";
 import { REQUIRED_FIELDS } from "../validators/profiles.validator.js";
 
 /** The signed-in user's own account page. Mounted at /api/v1/me. */
@@ -99,6 +100,7 @@ meRouter.get(
     const missing = profiles.reduce((sum, p) => sum + p.missing.length, 0) + accountChecks.filter((c) => !c.filled).length;
 
     const registrationFee = await feeStatusFor(user.id);
+    const volunteer = toVolunteer(await VolunteerModel.findByUser(user.id));
     const [unread, donations] = await Promise.all([
       NotificationModel.listUnread(user.id, 5),
       sql(
@@ -121,6 +123,7 @@ meRouter.get(
           missingAccount: accountChecks.filter((c) => !c.filled).map((c) => c.key),
         },
         profiles,
+        volunteer: volunteer ?? undefined,
         registrationFee,
         notifications: { unread: unread.length, recent: unread },
         donations: {

@@ -37,6 +37,8 @@ export const audienceSchema = z.discriminatedUnion("mode", [
         profile: z.enum(["incomplete", "complete"]).optional(),
         registration: z.enum(["none", "any"]).optional(),
         verified: z.enum(["yes", "no"]).optional(),
+        volunteer: z.enum(["yes", "no"]).optional(),
+        interest: z.string().trim().max(80).optional(),
       })
       .refine((s) => Object.values(s).some((v) => v !== undefined && !(Array.isArray(v) && v.length === 0)), {
         message: "Choose at least one filter, or send to everyone.",

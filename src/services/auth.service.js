@@ -7,6 +7,7 @@ import { UserModel, toUser } from "../models/user.model.js";
 import { listProfilesForUser, missingFieldsFor, profileRepository } from "../models/profile.model.js";
 import { RegistrationPaymentModel } from "../models/registrationPayment.model.js";
 import { feeState, getRegistrationFee } from "../config/plans.js";
+import { VolunteerModel, toVolunteer } from "../models/volunteer.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { signAccessToken } from "../utils/tokens.js";
 import { RefreshTokens } from "../models/refreshToken.model.js";
@@ -31,9 +32,15 @@ export const AuthService = {
   /** Adds the categories (artist, temple, ...) the user has registered for. */
   async withProfiles(user) {
     if (!user) return user;
-    const [profiles, { paid }, fee] = await Promise.all([listProfilesForUser(user.id), RegistrationPaymentModel.paidSummary(user.id), getRegistrationFee()]);
-    // Admins never pay a fee.
-    return { ...user, profiles, registrationFee: user.role === "admin" ? "paid" : feeState(paid, fee) };
+    const [profiles, { paid }, fee, volunteer] = await Promise.all([
+      listProfilesForUser(user.id),
+      RegistrationPaymentModel.paidSummary(user.id),
+      getRegistrationFee(),
+      VolunteerModel.findByUser(user.id),
+    ]);
+    // Admins never pay a fee. A volunteer who has paid nothing is "free": not held back, not reminded (they may pay later to become a member).
+    const registrationFee = user.role === "admin" ? "paid" : volunteer && paid <= 0 ? "free" : feeState(paid, fee);
+    return { ...user, profiles, volunteer: toVolunteer(volunteer) ?? undefined, registrationFee };
   },
 
   /**

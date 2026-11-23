@@ -7,6 +7,7 @@ import { sendSuccess } from "../utils/apiResponse.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate, validateQuery } from "../middleware/validate.js";
 import { UserModel } from "../models/user.model.js";
+import { VolunteerModel } from "../models/volunteer.model.js";
 import { RegistrationPaymentModel } from "../models/registrationPayment.model.js";
 import { NotificationModel } from "../models/notification.model.js";
 import {
@@ -112,8 +113,10 @@ export async function feeStatusFor(userId) {
   const { paid, lastPaidAt, lastReceipt } = await RegistrationPaymentModel.paidSummary(userId);
   const rules = await getRegistrationFee();
   const next = allowedPayment(paid, rules);
+  // A volunteer who has paid nothing owes nothing: their account is free, and paying is their choice.
+  const free = paid <= 0 && Boolean(await VolunteerModel.findByUser(userId));
   return {
-    status: feeState(paid, rules),
+    status: free ? "free" : feeState(paid, rules),
     total: rules.total,
     minimum: rules.minimum,
     paid,

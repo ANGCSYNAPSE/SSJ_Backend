@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import { env, isProduction } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
-import { contactMessageEmail, donationReceiptEmail, passwordResetCodeEmail, passwordResetEmail, paymentReceiptEmail, refundEmail, securityNoticeEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
+import { contactMessageEmail, donationReceiptEmail, passwordResetCodeEmail, passwordResetEmail, paymentReceiptEmail, refundEmail, securityNoticeEmail, signupOtpEmail, volunteerWelcomeEmail, welcomeEmail } from "./mailTemplates.js";
 
 /** Test mode only: every email "sent" during a test run. */
 export const mailOutbox = [];
@@ -78,6 +78,11 @@ export async function sendSignupOtpEmail({ to, fullName, code, minutes }) {
 
 export async function sendWelcomeEmail({ to, fullName, paid, balance, receipt }) {
   const mail = welcomeEmail({ fullName, paid, balance, receipt, siteUrl: env.siteUrl });
+  await deliver({ to, ...mail }, {});
+}
+
+export async function sendVolunteerWelcomeEmail({ to, fullName }) {
+  const mail = volunteerWelcomeEmail({ fullName, siteUrl: env.siteUrl });
   await deliver({ to, ...mail }, {});
 }
 

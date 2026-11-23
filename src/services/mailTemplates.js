@@ -123,6 +123,30 @@ export function welcomeEmail({ fullName, paid, balance, receipt, siteUrl }) {
   };
 }
 
+/** The welcome for a volunteer: no fee, no receipt, just what happens next. */
+export function volunteerWelcomeEmail({ fullName, siteUrl }) {
+  return {
+    subject: "Welcome, volunteer - thank you for your time",
+    text: `Hi ${fullName},
+
+Thank you for offering your time to Shyam Jagat. Your volunteer account is ready, and it is free.
+Our team will look at your details and get in touch when seva begins in your area. Seva starts place by place, as volunteers and support allow.
+
+Sign in: ${siteUrl}/login
+
+Jai Shri Shyam`,
+    html: layout({
+      preheader: "Your volunteer account is ready",
+      title: "Thank you for your time 🙏",
+      bodyHtml: `
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Hi ${esc(fullName)}, your Shyam Jagat volunteer account is ready. It is free.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Our team will look at your details and get in touch when seva begins in your area. Seva starts place by place, as volunteers and support allow, so a call may take a little time.</p>
+        <p style="margin:14px 0 0;padding:12px 14px;background:#fff8ec;border-left:4px solid #e87722;font-size:14px;">If you would like to become a member later, you can do so from your profile at any time. It is entirely your choice.</p>
+        <p style="margin:22px 0 0;text-align:center;"><a href="${esc(siteUrl)}/login" style="display:inline-block;background:#e87722;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 28px;border-radius:10px;">Sign in</a></p>`,
+    }),
+  };
+}
+
 const when = (iso) =>
   new Date(iso ?? Date.now()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
 

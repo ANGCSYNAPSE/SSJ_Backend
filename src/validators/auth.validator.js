@@ -46,7 +46,7 @@ export const signupSchema = z
     becomeMember: z.boolean().optional().default(false),
     // Set when the person is registering as an artist, temple, etc. The
     // category's own fields travel in `profile` and are validated below.
-    category: z.enum(CATEGORY_KEYS).optional(),
+    category: z.enum([...CATEGORY_KEYS, "volunteer"]).optional(),
     profile: z.record(z.unknown()).optional(),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -56,6 +56,12 @@ export const signupSchema = z
   .transform((data, ctx) => {
     if (!data.category) {
       const { profile: _ignored, ...rest } = data;
+      return rest;
+    }
+
+    // A volunteer's details come in the second step of the form (checked there), not with the account.
+    if (data.category === "volunteer") {
+      const { profile: _later, ...rest } = data;
       return rest;
     }
 

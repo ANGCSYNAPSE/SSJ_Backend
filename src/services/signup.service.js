@@ -9,8 +9,10 @@ import { RegistrationPaymentModel } from "../models/registrationPayment.model.js
 import { NotificationModel } from "../models/notification.model.js";
 import { PAYMENT_APP, PAYMENT_PURPOSE, allowedPayment, feeState, getRegistrationFee } from "../config/plans.js";
 import { PROFILE_SCHEMAS } from "../validators/profiles.validator.js";
+import { volunteerProfile } from "../validators/volunteer.validator.js";
+import { VolunteerModel } from "../models/volunteer.model.js";
 import { AuthService } from "./auth.service.js";
-import { sendSignupOtpEmail, sendWelcomeEmail } from "./mail.service.js";
+import { sendSignupOtpEmail, sendVolunteerWelcomeEmail, sendWelcomeEmail } from "./mail.service.js";
 import { emailSignupReceipts } from "./receipt.service.js";
 import { sendSms, signupOtpText, smsConfigured } from "./sms.service.js";
 import { confirmPayment, createRazorpayOrder, verifyPaymentSignature } from "./razorpay.service.js";
@@ -27,6 +29,13 @@ const MAX_RESENDS = 5;
 const MAX_OTP_ATTEMPTS = 5;
 /** A pending signup is kept this long after its last activity. */
 const PENDING_DAYS = 7;
+
+/**
+ * Registrations that cost nothing. A volunteer's account is created as soon as the email is verified and the details are
+ * saved: no payment step. (They can pay the membership fee later from their profile if they want to be a member.)
+ */
+const FREE_CATEGORIES = ["volunteer"];
+const isFree = (pending) => FREE_CATEGORIES.includes(pending.category);
 
 /** A plain member has no category form: their details are just where they live. */
 const MEMBER_DETAILS = z.object({
@@ -57,7 +66,11 @@ async function loadPending(id) {
 }
 
 /** What has been paid so far on a pending signup, and what may be paid next. */
-async function feeOf(pendingId) {
+async function feeOf(pending) {
+  if (isFree(pending)) {
+    return { status: "free", free: true, total: 0, minimum: 0, paid: 0, balance: 0, nextMin: 0, nextMax: 0, canComplete: true };
+  }
+  const pendingId = pending.id;
   const [row] = await sql(
     `SELECT COALESCE(SUM(amount_in_rupees), 0)::float AS paid FROM registration_payments
      WHERE pending_signup_id = $1 AND status = 'paid'`,
@@ -214,7 +227,7 @@ export const SignupService = {
     if (!pending.email_verified_at && !(await hasActiveCode(pending.id))) {
       sentBy = await sendNewCode(pending, channel);
     }
-    return { ...summary(pending, await feeOf(pending.id)), sentBy };
+    return { ...summary(pending, await feeOf(pending)), sentBy };
   },
 
   /**
@@ -308,7 +321,7 @@ export const SignupService = {
 
   /** The saved details of a pending signup, for the screens that carry on from where the person stopped. */
   async describe(pending) {
-    const fee = await feeOf(pending.id);
+    const fee = await feeOf(pending);
     return {
       ...summary(pending, fee),
       account: { fullName: pending.full_name, email: pending.email, mobile: pending.mobile },
@@ -345,7 +358,7 @@ export const SignupService = {
    */
   async verifyOtp(pendingId, code) {
     const pending = await loadPending(pendingId);
-    if (pending.email_verified_at) return summary(pending, await feeOf(pending.id));
+    if (pending.email_verified_at) return summary(pending, await feeOf(pending));
 
     const [otp] = await sql(`SELECT * FROM otp_codes WHERE pending_signup_id = $1 ORDER BY created_at DESC LIMIT 1`, [pending.id]);
     if (!otp || new Date(otp.expires_at) < new Date()) {
@@ -364,7 +377,7 @@ export const SignupService = {
     await sql(`DELETE FROM otp_codes WHERE pending_signup_id = $1`, [pending.id]);
     const [verified] = await sql(`UPDATE pending_signups SET email_verified_at = NOW() WHERE id = $1 RETURNING *`, [pending.id]);
     await keepAlive(pending.id);
-    return summary(verified, await feeOf(pending.id));
+    return summary(verified, await feeOf(pending));
   },
 
   /**
@@ -374,7 +387,7 @@ export const SignupService = {
   async setProfile(pendingId, profile) {
     const pending = await loadPending(pendingId);
     if (!pending.email_verified_at) throw ApiError.badRequest("Please verify your email first.");
-    const schema = pending.category ? PROFILE_SCHEMAS[pending.category] : MEMBER_DETAILS;
+    const schema = pending.category === "volunteer" ? volunteerProfile : pending.category ? PROFILE_SCHEMAS[pending.category] : MEMBER_DETAILS;
     const parsed = schema.safeParse(profile ?? {});
     if (!parsed.success) {
       throw ApiError.badRequest(
@@ -386,7 +399,7 @@ export const SignupService = {
       pending.id,
       JSON.stringify(parsed.data),
     ]);
-    return summary(saved, await feeOf(pending.id));
+    return summary(saved, await feeOf(pending));
   },
 
   /** A Razorpay order for a signup that has verified its email and finished its details. */
@@ -394,8 +407,9 @@ export const SignupService = {
     const pending = await loadPending(pendingId);
     if (!pending.email_verified_at) throw ApiError.badRequest("Please verify your email first.");
     if (!pending.details_saved_at) throw ApiError.badRequest("Please finish your details first.");
+    if (isFree(pending)) throw ApiError.conflict("Volunteer registration is free. There is nothing to pay.");
 
-    const fee = await feeOf(pending.id);
+    const fee = await feeOf(pending);
     if (fee.balance <= 0) throw ApiError.conflict("The registration fee is already paid in full.");
     if (amount > fee.nextMax) throw ApiError.badRequest(`Only ₹${fee.nextMax} is due.`);
     if (amount < fee.nextMin) {
@@ -465,21 +479,32 @@ export const SignupService = {
     const pending = await loadPending(pendingId);
     if (!pending.email_verified_at) throw ApiError.badRequest("Please verify your email first.");
     if (!pending.details_saved_at) throw ApiError.badRequest("Please finish your details first.");
-    const fee = await feeOf(pending.id);
+    const fee = await feeOf(pending);
     if (!fee.canComplete) throw ApiError.badRequest(`Please pay at least ₹${fee.minimum} to finish.`);
 
+    const free = isFree(pending);
     const result = await AuthService.createAccount({
       fullName: pending.full_name,
       email: pending.email,
       mobile: pending.mobile,
       passwordHash: pending.password_hash,
       becomeMember: pending.become_member,
-      category: pending.category ?? undefined,
-      profile: pending.profile ?? undefined,
-      // A plain member's details are where they live, kept on the account itself.
-      location: pending.category ? undefined : [pending.profile?.city, pending.profile?.state].filter(Boolean).join(", ") || undefined,
+      // A volunteer is an ordinary account; their seva details go in the volunteers table below.
+      category: free ? undefined : pending.category ?? undefined,
+      profile: free ? undefined : pending.profile ?? undefined,
+      // A plain member's (or volunteer's) details are where they live, kept on the account itself.
+      location: pending.category && !free ? undefined : [pending.profile?.city, pending.profile?.state].filter(Boolean).join(", ") || undefined,
       emailVerified: true,
     });
+
+    if (pending.category === "volunteer") {
+      try {
+        await VolunteerModel.create({ ...pending.profile, userId: result.user.id });
+      } catch (error) {
+        // The account is made and must stay; the volunteer can add their seva details again from their profile.
+        console.error("[volunteer] could not save the volunteer details:", error.message);
+      }
+    }
 
     // Signed up with Google: the account remembers it, so the next Google sign-in finds it.
     if (pending.google_sub) {
@@ -500,13 +525,20 @@ export const SignupService = {
     await NotificationModel.notify(result.user.id, {
       kind: "success",
       category: "system",
-      title: "Welcome to Shyam Jagat",
-      message: `Your account is ready and your payment of ₹${fee.paid.toLocaleString("en-IN")} was received. Jai Shri Shyam!`,
+      title: free ? "Welcome, volunteer" : "Welcome to Shyam Jagat",
+      message: free
+        ? "Thank you for offering your time. Your volunteer registration is with our team; we will be in touch when seva begins in your area. Jai Shri Shyam!"
+        : `Your account is ready and your payment of ₹${fee.paid.toLocaleString("en-IN")} was received. Jai Shri Shyam!`,
       link: "/profile",
       dedupeKey: "welcome",
     });
 
     const user = await AuthService.withProfiles(await UserModel.findById(result.user.id));
+    if (free) {
+      // Nothing was paid, so there is no receipt: just a warm welcome.
+      sendVolunteerWelcomeEmail({ to: user.email, fullName: user.fullName }).catch((error) => console.error("[mail] welcome email failed:", error.message));
+      return { user, accessToken: result.accessToken };
+    }
     const { receipt } = await RegistrationPaymentModel.paidSummary(user.id);
     // A failed email must not undo a paid, created account.
     sendWelcomeEmail({ to: user.email, fullName: user.fullName, paid: fee.paid, balance: fee.balance, receipt }).catch((error) =>

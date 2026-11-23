@@ -13,6 +13,8 @@ import { getRegistrationFee } from "../config/plans.js";
  *   profile:      "incomplete" (a registration still has required details missing) | "complete"
  *   registration: "none" (plain members, no category) | "any" (registered in at least one category)
  *   verified:     "yes" (an admin has verified the account) | "no" (not verified yet)
+ *   volunteer:    "yes" (registered as a volunteer) | "no" (not a volunteer)
+ *   interest:     a volunteer who wants to help with this seva (as written on the volunteer form)
  */
 const MAX_AUDIENCE = 20_000;
 
@@ -34,7 +36,14 @@ async function build(audience) {
   if (segment.fee) {
     const { total } = await getRegistrationFee();
     const paid = "(SELECT COALESCE(SUM(p.net_amount_in_rupees), 0) FROM registration_payments p WHERE p.user_id = u.id AND p.status = 'paid')";
-    where.push(segment.fee === "paid" ? `${paid} >= ${add(total)}` : segment.fee === "partial" ? `${paid} > 0 AND ${paid} < ${add(total)}` : `${paid} = 0`);
+    // A volunteer who has paid nothing is not "unpaid": their account is free.
+    where.push(
+      segment.fee === "paid"
+        ? `${paid} >= ${add(total)}`
+        : segment.fee === "partial"
+          ? `${paid} > 0 AND ${paid} < ${add(total)}`
+          : `${paid} = 0 AND NOT EXISTS (SELECT 1 FROM volunteers fv WHERE fv.user_id = u.id)`,
+    );
   }
   if (segment.categories?.length) {
     where.push(`EXISTS (SELECT 1 FROM all_registrations r WHERE r.user_id = u.id AND r.type::text = ANY(${add(segment.categories)}::text[]))`);
@@ -49,6 +58,8 @@ async function build(audience) {
   }
   if (segment.registration === "none") where.push("NOT EXISTS (SELECT 1 FROM all_registrations r WHERE r.user_id = u.id)");
   if (segment.registration === "any") where.push("EXISTS (SELECT 1 FROM all_registrations r WHERE r.user_id = u.id)");
+  if (segment.volunteer) where.push(`${segment.volunteer === "yes" ? "" : "NOT "}EXISTS (SELECT 1 FROM volunteers vv WHERE vv.user_id = u.id)`);
+  if (segment.interest) where.push(`EXISTS (SELECT 1 FROM volunteers vi WHERE vi.user_id = u.id AND vi.interests ? ${add(segment.interest)})`);
   if (segment.verified) where.push(segment.verified === "yes" ? "u.is_verified = TRUE" : "u.is_verified = FALSE");
 
   return { text: `SELECT u.id FROM users u WHERE ${where.join(" AND ")}`, params };
