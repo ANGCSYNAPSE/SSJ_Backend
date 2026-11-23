@@ -189,8 +189,11 @@ describe("refresh tokens are stored, hashed, in their own table", () => {
     assert.equal((await api("/auth/refresh", { method: "POST", cookie })).status, 401);
   });
 
-  it("a request with no cookie is refused", async () => {
-    assert.equal((await api("/auth/refresh", { method: "POST" })).status, 401);
+  it("a request with no cookie is answered with no session, not an error", async () => {
+    const res = await api("/auth/refresh", { method: "POST" });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data, null);
+    assert.equal(res.setCookie, null);
   });
 
   it("a tampered token is refused", async () => {

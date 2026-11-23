@@ -145,7 +145,7 @@ router.post("/login", authLimiter, validate(loginSchema), authController.login);
  *     summary: Exchange the refresh cookie for a new access token
  *     responses:
  *       200:
- *         description: Session refreshed
+ *         description: Session refreshed, or `data` is null when there is no refresh cookie (nobody is signed in)
  *         content:
  *           application/json:
  *             schema:

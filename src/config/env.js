@@ -56,7 +56,9 @@ export const env = {
   adminUrl: (process.env.ADMIN_URL ?? "http://localhost:5173").replace(/\/+$/, ""),
   // The public website; emails link back to it.
   // Where people write about payments and refunds; shown in receipts and refund emails.
-  supportEmail: process.env.SUPPORT_EMAIL ?? "shyamjagat@gmail.com",
+  supportEmail: process.env.SUPPORT_EMAIL ?? "shyamjagatindia@gmail.com",
+  // Where a message sent through the website's contact form is emailed.
+  contactInbox: process.env.CONTACT_INBOX_EMAIL ?? "shyamjagatindia@gmail.com",
   siteUrl: (process.env.SITE_URL ?? "http://localhost:3000").replace(/\/+$/, ""),
   // The old one-step signup skips the email code and the payment, so it stays off unless a test needs it.
   allowDirectSignup: process.env.ALLOW_DIRECT_SIGNUP === "true",

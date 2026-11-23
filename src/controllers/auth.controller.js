@@ -63,7 +63,9 @@ export const login = asyncHandler(async (req, res) => {
 export const refresh = asyncHandler(async (req, res) => {
   const token = readRefreshCookie(req);
   if (!token) {
-    throw ApiError.unauthorized("Session expired. Please sign in again.");
+    // Nobody is signed in on this browser. That is an ordinary answer, not an error: the site asks on every page
+    // load, and a 401 here would show as a red error in the browser console each time.
+    return sendSuccess(res, { message: "No active session.", data: null });
   }
 
   // The token must be the one the server issued and still holds: a copied, used or ended token is refused.

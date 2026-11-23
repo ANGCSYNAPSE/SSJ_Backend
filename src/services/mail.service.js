@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import { env, isProduction } from "../config/env.js";
 import { ApiError } from "../utils/ApiError.js";
-import { donationReceiptEmail, passwordResetCodeEmail, passwordResetEmail, paymentReceiptEmail, refundEmail, securityNoticeEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
+import { contactMessageEmail, donationReceiptEmail, passwordResetCodeEmail, passwordResetEmail, paymentReceiptEmail, refundEmail, securityNoticeEmail, signupOtpEmail, welcomeEmail } from "./mailTemplates.js";
 
 /** Test mode only: every email "sent" during a test run. */
 export const mailOutbox = [];
@@ -20,10 +20,10 @@ const transporter = env.smtp.host
  * log (so a code or link can be copied from there); production refuses, because a person waiting
  * for a code that never arrives is worse than an honest error.
  */
-async function deliver({ to, subject, text, html }, { log }) {
+async function deliver({ to, subject, text, html, replyTo }, { log }) {
   // Under test, mail is collected here instead of sent, so tests can read the codes and nothing real is ever emailed.
   if (env.nodeEnv === "test") {
-    mailOutbox.push({ to, subject, text, html });
+    mailOutbox.push({ to, subject, text, html, replyTo });
     return;
   }
   if (!transporter) {
@@ -32,7 +32,7 @@ async function deliver({ to, subject, text, html }, { log }) {
     return;
   }
   try {
-    await transporter.sendMail({ from: env.smtp.from, to, subject, text, html });
+    await transporter.sendMail({ from: env.smtp.from, to, subject, text, html, ...(replyTo ? { replyTo } : {}) });
   } catch (error) {
     // The provider's message ("535 Authentication failed", ...) is for the server log, not for the person signing up.
     console.error(`[mail] could not send "${subject}" to ${to}: ${error.message}`);
@@ -48,6 +48,12 @@ export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
 export async function sendRefundEmail({ to, fullName, amount, refundId, paid, balance, manual }) {
   const mail = refundEmail({ fullName, amount, refundId, paid, balance, manual, siteUrl: env.siteUrl, supportEmail: env.supportEmail });
   await deliver({ to, ...mail }, {});
+}
+
+/** The website's contact form, emailed to the team's inbox. Replying answers the visitor directly. */
+export async function sendContactMessageEmail({ name, email, phone, subject, message, receivedAt }) {
+  const mail = contactMessageEmail({ name, email, phone, subject, message, receivedAt });
+  await deliver({ to: env.contactInbox, replyTo: `"${String(name).replace(/["\r\n]/g, "")}" <${email}>`, ...mail }, {});
 }
 
 export async function sendPaymentReceiptEmail({ to, fullName, receiptNo, paidAt, amount, paymentRef, offline, note, total, paid, balance }) {

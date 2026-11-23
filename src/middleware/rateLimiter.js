@@ -44,3 +44,10 @@ export const signupFlowLimiter = rateLimit({
   max: 40,
   skipSuccessfulRequests: true,
 });
+
+/** The contact form is public and sends an email, so one visitor can only send a few messages in a while. */
+export const contactLimiter = rateLimit({
+  ...shared,
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+});

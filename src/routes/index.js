@@ -1,6 +1,6 @@
 import { Router } from "express";
 import authRoutes from "./auth.routes.js";
-import { adsRouter } from "./ads.routes.js";
+import { adsRouter, adsPublicExtrasRouter, adsAdminExtrasRouter } from "./ads.routes.js";
 import { blogCategoriesRouter, blogPostsRouter } from "./blog.routes.js";
 import { communitiesRouter } from "./communities.routes.js";
 import { adminContactRouter, contactRouter } from "./contact.routes.js";
@@ -89,6 +89,9 @@ const content = {
   "/state-chapters": stateChaptersRouter,
   "/team-members": teamMembersRouter,
 };
+// Before the content loop: "/ads/rotation" must not be read as an ad id.
+router.use("/ads", adsPublicExtrasRouter);
+admin.use("/ads", adsAdminExtrasRouter);
 for (const [path, crud] of Object.entries(content)) {
   router.use(path, crud.reads);
   admin.use(path, crud);

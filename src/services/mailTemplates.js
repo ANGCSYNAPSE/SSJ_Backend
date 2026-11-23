@@ -250,6 +250,40 @@ Jai Shri Shyam`,
   };
 }
 
+/** A message from the website's contact form, for the team's inbox. */
+export function contactMessageEmail({ name, email, phone, subject, message, receivedAt }) {
+  const topic = subject?.trim() || "No subject";
+  const when = new Date(receivedAt ?? Date.now()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
+  return {
+    subject: `Website enquiry: ${topic.replace(/[\r\n]+/g, " ").slice(0, 120)}`,
+    text: `A new message came in through the Contact page.
+
+From: ${name} <${email}>
+Phone: ${phone?.trim() || "not given"}
+Subject: ${topic}
+Received: ${when}
+
+${message}
+
+Reply to this email to answer ${name} directly.`,
+    html: layout({
+      preheader: `${name}: ${topic}`,
+      title: "New website enquiry",
+      bodyHtml: `
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="6" style="font-size:14px;border-top:2px solid #e87722;border-bottom:1px solid #ecd9b0;">
+          <tr><td style="color:#8a8580;width:90px;">From</td><td><b>${esc(name)}</b></td></tr>
+          <tr><td style="color:#8a8580;">Email</td><td><a href="mailto:${esc(email)}" style="color:#e87722;">${esc(email)}</a></td></tr>
+          <tr><td style="color:#8a8580;">Phone</td><td>${esc(phone?.trim() || "not given")}</td></tr>
+          <tr><td style="color:#8a8580;">Subject</td><td>${esc(topic)}</td></tr>
+          <tr><td style="color:#8a8580;">Received</td><td>${esc(when)}</td></tr>
+        </table>
+        <p style="margin:16px 0 6px;font-size:12px;font-weight:700;letter-spacing:1px;color:#8a8580;">MESSAGE</p>
+        <p style="margin:0;padding:14px;background:#fff8ec;border-left:4px solid #e87722;font-size:15px;line-height:1.6;white-space:pre-wrap;">${esc(message)}</p>
+        <p style="margin:16px 0 0;font-size:13px;color:#8a8580;">Reply to this email to answer ${esc(name)} directly.</p>`,
+    }),
+  };
+}
+
 export function passwordResetEmail({ fullName, resetUrl, minutes }) {
   return {
     subject: "Reset your Shyam Jagat password",

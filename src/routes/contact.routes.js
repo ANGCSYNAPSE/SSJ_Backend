@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { contactLimiter } from "../middleware/rateLimiter.js";
+import { sendContactMessageEmail } from "../services/mail.service.js";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/apiResponse.js";
@@ -65,10 +67,17 @@ export const adminContactRouter = Router();
 
 contactRouter.post(
   "/",
+  contactLimiter,
   validate(createContactSubmissionSchema),
   asyncHandler(async (req, res) => {
     const created = await ContactSubmissionModel.create({ ...req.validated, isHandled: false });
-    sendSuccess(res, { status: 201, message: "Submitted.", data: created });
+    // The message is saved first (it shows in the admin's Contact inquiries), so a problem with email never loses it.
+    try {
+      await sendContactMessageEmail({ ...req.validated, receivedAt: created.createdAt });
+    } catch (error) {
+      console.error("[contact] message saved but the email to the team failed:", error.message);
+    }
+    sendSuccess(res, { status: 201, message: "Thank you! We have received your message.", data: { id: created.id } });
   }),
 );
 
