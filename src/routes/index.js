@@ -1,6 +1,7 @@
 import { Router } from "express";
 import authRoutes from "./auth.routes.js";
 import { volunteerMeRouter, adminVolunteersRouter } from "./volunteers.routes.js";
+import { cardMeRouter, publicCardRouter } from "./cards.routes.js";
 import { adsRouter, adsPublicExtrasRouter, adsAdminExtrasRouter } from "./ads.routes.js";
 import { blogCategoriesRouter, blogPostsRouter } from "./blog.routes.js";
 import { communitiesRouter } from "./communities.routes.js";
@@ -109,6 +110,8 @@ router.use("/donations", donationsRouter);
 router.use("/events/:eventId/volunteers", eventVolunteersRouter);
 router.use("/me/mobile", mobileRouter);
 router.use("/me/volunteer", volunteerMeRouter);
+router.use("/me/card", cardMeRouter);
+router.use("/cards", publicCardRouter);
 router.use("/me", meRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/payments/documents", memberDocumentsRouter);

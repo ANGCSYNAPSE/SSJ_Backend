@@ -113,12 +113,13 @@ donationsRouter.post(
   "/create-order",
   validate(createDonationOrderSchema),
   asyncHandler(async (req, res) => {
-    const { amount, cause, donorName, email, phone, anonymous, wantReceipt } = req.validated;
+    const { amount, cause, donorName, email, phone, anonymous, wantReceipt, sevaType, occasion, dedicatedTo, message, preferredDate, city, payMethod, instructions, gotra, attend, updates, witness, witnessTime, videoNumber } =
+      req.validated;
 
     const order = await createRazorpayOrder({
       amountInPaise: Math.round(amount * 100),
       receipt: `donation_${Date.now()}`,
-      notes: { cause, donor_name: donorName, anonymous: String(anonymous) },
+      notes: { cause, donor_name: donorName, anonymous: String(anonymous), ...(sevaType ? { seva: sevaType } : {}) },
     });
 
     await DonationModel.create({
@@ -129,6 +130,20 @@ donationsRouter.post(
       phone,
       anonymous,
       wantReceipt,
+      sevaType,
+      occasion,
+      dedicatedTo,
+      message,
+      preferredDate,
+      city,
+      payMethod,
+      instructions,
+      gotra,
+      attend,
+      updates,
+      witness,
+      witnessTime,
+      videoNumber,
       razorpayOrderId: order.id,
       status: "created",
     });
@@ -183,6 +198,7 @@ donationsRouter.get(
       name: d.anonymous ? "Anonymous" : d.donorName,
       amount: d.amountInRupees,
       cause: d.cause,
+      sevaType: d.sevaType ?? null,
       time: d.createdAt,
     }));
     sendSuccess(res, { data: feed });
