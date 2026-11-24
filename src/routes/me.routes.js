@@ -122,6 +122,23 @@ meRouter.get(
       [user.email],
     );
 
+    // What the person gave in each of the last six months (zero where nothing), for the chart on their profile.
+    const monthRows = await sql(
+      `SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month, COALESCE(SUM(amount_in_rupees), 0)::float AS total
+         FROM donations
+        WHERE status = 'paid' AND lower(email) = lower($1) AND created_at >= date_trunc('month', NOW()) - INTERVAL '5 months'
+        GROUP BY 1`,
+      [user.email],
+    );
+    const byMonth = new Map(monthRows.map((r) => [r.month, r.total]));
+    const monthly = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date();
+      d.setUTCDate(1);
+      d.setUTCMonth(d.getUTCMonth() - (5 - i));
+      const month = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+      return { month, total: byMonth.get(month) ?? 0 };
+    });
+
     sendSuccess(res, {
       data: {
         account: user,
@@ -136,6 +153,7 @@ meRouter.get(
         donations: {
           count: totals?.count ?? 0,
           total: totals?.total ?? 0,
+          monthly,
           recent: donations.map((d) => ({
             id: d.id,
             amount: Number(d.amount_in_rupees),
