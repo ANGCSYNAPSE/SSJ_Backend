@@ -40,6 +40,8 @@ const publicCard = async (row) => ({
   name: row.full_name,
   photoUrl: row.avatar_url ?? null,
   location: row.location ?? null,
+  bio: row.bio ?? null,
+  links: row.social_links ?? {},
   verified: Boolean(row.is_verified),
   memberSince: row.created_at,
   kinds: await kindsOf(row.id, row.is_member),
@@ -47,7 +49,7 @@ const publicCard = async (row) => ({
 
 const cardUrl = (code) => `${env.siteUrl}/card/${code}`;
 
-const SELECT = `SELECT id, full_name, avatar_url, location, is_verified, is_member, created_at, card_code, card_enabled FROM users`;
+const SELECT = `SELECT id, full_name, avatar_url, location, bio, social_links, is_verified, is_member, created_at, card_code, card_enabled FROM users`;
 
 /**
  * @openapi

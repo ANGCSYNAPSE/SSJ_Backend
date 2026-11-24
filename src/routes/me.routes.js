@@ -19,6 +19,7 @@ import { findProfileByUser, listProfilesForUser } from "../models/profile.model.
 import { feeStatusFor } from "./payments.routes.js";
 import { VolunteerModel, toVolunteer } from "../models/volunteer.model.js";
 import { REQUIRED_FIELDS } from "../validators/profiles.validator.js";
+import { cleanLinks, socialLinksSchema } from "../validators/socialLinks.js";
 
 /** The signed-in user's own account page. Mounted at /api/v1/me. */
 export const meRouter = Router();
@@ -28,6 +29,8 @@ const updateAccountSchema = z
     fullName: z.string().trim().min(2).max(120).optional(),
     location: z.string().trim().max(120).nullable().optional(),
     avatarUrl: z.string().trim().url().max(500).nullable().optional(),
+    bio: z.string().trim().max(300).nullable().optional(),
+    socialLinks: socialLinksSchema.optional(),
   })
   .strict();
 
@@ -63,6 +66,8 @@ const percent = (total, missing) => (total === 0 ? 100 : Math.round(((total - mi
  *               fullName: { type: string }
  *               location: { type: string, nullable: true }
  *               avatarUrl: { type: string, format: uri, nullable: true }
+ *               bio: { type: string, nullable: true, description: "A few words about yourself (300 characters)" }
+ *               socialLinks: { type: object, description: "youtube, instagram, facebook, x, linkedin, website: each an https link on that platform, or empty to remove" }
  *     responses:
  *       200: { description: Updated account }
  */
@@ -70,8 +75,10 @@ meRouter.get(
   "/dashboard",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = await UserModel.findById(req.user.id);
-    if (!user) throw ApiError.notFound("Account not found.");
+    const found = await UserModel.findById(req.user.id);
+    if (!found) throw ApiError.notFound("Account not found.");
+    const [extra] = await sql(`SELECT bio, social_links FROM users WHERE id = $1`, [found.id]);
+    const user = { ...found, bio: extra?.bio ?? null, socialLinks: extra?.social_links ?? {} };
 
     const summaries = await listProfilesForUser(user.id);
     const profiles = await Promise.all(
@@ -146,7 +153,10 @@ meRouter.patch(
   requireAuth,
   validate(updateAccountSchema),
   asyncHandler(async (req, res) => {
-    const updated = await UserModel.update(req.user.id, req.validated);
+    const { bio, socialLinks, ...rest } = req.validated;
+    const updated = Object.keys(rest).length ? await UserModel.update(req.user.id, rest) : await UserModel.findById(req.user.id);
+    if (bio !== undefined) await sql(`UPDATE users SET bio = $2 WHERE id = $1`, [req.user.id, bio || null]);
+    if (socialLinks !== undefined) await sql(`UPDATE users SET social_links = $2::jsonb WHERE id = $1`, [req.user.id, JSON.stringify(cleanLinks(socialLinks))]);
     sendSuccess(res, { message: "Account updated.", data: updated });
   }),
 );
