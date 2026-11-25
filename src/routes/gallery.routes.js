@@ -17,6 +17,9 @@ const shareSchema = z.object({
   caption: z.string().trim().max(200).optional(),
 });
 
+/** The seva a gallery folder belongs to: the Own Wish gallery is "your-choice"; an initiative's folder is named after its seva. */
+const sevaOfFolder = (gallery, folder) => (gallery === "own-wish" ? (folder === "own-wish" ? "your-choice" : null) : folder === "own-wish" ? null : folder);
+
 const reviewSchema = z.object({
   status: z.enum(["approved", "rejected", "pending"]),
   note: z.string().trim().max(500).optional(),
@@ -34,6 +37,13 @@ const reviewSchema = z.object({
  *     responses:
  *       200: { description: "Approved items: id, folder, kind, url, caption" }
  *       400: { description: Unknown gallery }
+ * /api/v1/gallery/my-sevas:
+ *   get:
+ *     tags: [Gallery]
+ *     summary: The sevas the signed-in member has given, which are the folders they can share into
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: "sevaType, offerings, lastAt for each seva with a paid offering" }
  * /api/v1/gallery/mine:
  *   get:
  *     tags: [Gallery]
@@ -43,10 +53,11 @@ const reviewSchema = z.object({
  *       200: { description: The member's own items, newest first }
  *   post:
  *     tags: [Gallery]
- *     summary: A member shares a photograph or video (it waits for an admin's approval)
+ *     summary: A member who has given that seva shares a photograph or video (it waits for an admin's approval)
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       201: { description: Received, waiting for approval }
+ *       403: { description: The member has not given that seva }
  * /api/v1/admin/gallery:
  *   get:
  *     tags: [Gallery]
@@ -84,6 +95,23 @@ galleryRouter.get(
   }),
 );
 
+/** The sevas the signed-in member has given (paid offerings): the only folders they can share into, with how many offerings each. */
+galleryRouter.get(
+  "/my-sevas",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const rows = await sql(
+      `SELECT seva_type AS "sevaType", COUNT(*)::int AS offerings, MAX(created_at) AS "lastAt"
+         FROM donations
+        WHERE status = 'paid' AND seva_type IS NOT NULL AND lower(email) = (SELECT lower(email) FROM users WHERE id = $1)
+        GROUP BY seva_type
+        ORDER BY MAX(created_at) DESC`,
+      [req.user.id],
+    );
+    sendSuccess(res, { data: rows });
+  }),
+);
+
 /** What the signed-in member has shared, with where each one stands (waiting, shown, or not shown). */
 galleryRouter.get(
   "/mine",
@@ -107,6 +135,13 @@ galleryRouter.post(
   validate(shareSchema),
   asyncHandler(async (req, res) => {
     const { gallery, folder, kind, url, caption } = req.validated;
+    const seva = sevaOfFolder(gallery, folder);
+    if (!seva) throw ApiError.badRequest("That folder does not belong to this gallery.");
+    const [given] = await sql(
+      `SELECT 1 FROM donations WHERE status = 'paid' AND seva_type = $1 AND lower(email) = (SELECT lower(email) FROM users WHERE id = $2) LIMIT 1`,
+      [seva, req.user.id],
+    );
+    if (!given) throw ApiError.forbidden("You can share pictures under a seva once you have given that seva.");
     const [row] = await sql(
       `INSERT INTO gallery_items (user_id, gallery, folder, kind, url, caption)
        VALUES ($1, $2, $3, $4, $5, $6)

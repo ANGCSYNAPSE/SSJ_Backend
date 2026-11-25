@@ -6,6 +6,7 @@ const TAG = "gal";
 
 before(startServer);
 after(async () => {
+  await sql(`DELETE FROM donations WHERE email LIKE 'autotest+${TAG}-%'`);
   await sql(`DELETE FROM gallery_items WHERE url LIKE 'https://example.com/autotest-gal-%'`);
   await cleanup(TAG);
   await stopServer();
@@ -14,6 +15,12 @@ after(async () => {
 const tokenOf = async (user) => (await login(user)).body.data.accessToken;
 const share = (token, extra = {}) =>
   api("/gallery", { token, body: { gallery: "own-wish", folder: "own-wish", kind: "photo", url: `https://example.com/autotest-gal-${Date.now()}${Math.floor(Math.random() * 1000)}.jpg`, caption: "Blankets given", ...extra } });
+/** Gives the member a paid offering for a seva, which is what lets them share pictures under it. */
+const give = async (user, sevaType) => {
+  const order = await api("/donations/create-order", { body: { amount: 501, cause: "Seva", donorName: user.fullName, email: user.email, phone: "9876543210", sevaType } });
+  if (order.status !== 201 && order.status !== 200) throw new Error(JSON.stringify(order.body));
+  await sql(`UPDATE donations SET status = 'paid' WHERE razorpay_order_id = $1`, [order.body.data.orderId]);
+};
 const publicUrls = async (gallery = "own-wish") => (await api(`/gallery?gallery=${gallery}`)).body.data.map((i) => i.url);
 
 describe("galleries: nothing is shown until an admin approves it", () => {
@@ -21,12 +28,21 @@ describe("galleries: nothing is shown until an admin approves it", () => {
     assert.equal((await api("/gallery", { body: { gallery: "own-wish", folder: "own-wish", kind: "photo", url: "https://example.com/autotest-gal-x.jpg" } })).status, 401);
     const member = await tokenOf(await createUser(TAG));
     assert.equal((await share(member, { gallery: "nope" })).status, 400);
+    assert.equal((await share(member, { gallery: "initiatives", folder: "own-wish" })).status, 400, "folder must belong to the gallery");
     assert.equal((await api("/gallery?gallery=nope")).status, 400);
   });
 
   it("a shared photo waits, is shown only once approved, and is hidden again if rejected", async () => {
-    const member = await tokenOf(await createUser(TAG));
+    const who = await createUser(TAG);
+    const member = await tokenOf(who);
     const admin = await tokenOf(await createUser(TAG, { role: "admin" }));
+
+    assert.equal((await share(member)).status, 403, "sharing needs a seva the member has given");
+    await give(who, "your-choice");
+    const sevas = (await api("/gallery/my-sevas", { token: member })).body.data;
+    assert.deepEqual(sevas.map((x) => x.sevaType), ["your-choice"], "the member's sevas are the folders they can share into");
+    assert.equal((await share(member, { gallery: "initiatives", folder: "annadan" })).status, 403, "not a seva they have given");
+    assert.equal((await api("/gallery/my-sevas")).status, 401);
 
     const made = await share(member);
     assert.equal(made.status, 201, JSON.stringify(made.body));
