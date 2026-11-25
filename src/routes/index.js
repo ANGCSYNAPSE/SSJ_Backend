@@ -9,6 +9,7 @@ import { adminContactRouter, contactRouter } from "./contact.routes.js";
 import { dashboardRouter } from "./dashboard.routes.js";
 import { donationContentRouter } from "./donationContent.routes.js";
 import { adminDonationsRouter, donationsRouter } from "./donations.routes.js";
+import { adminGalleryRouter, galleryRouter } from "./gallery.routes.js";
 import {
   adminEventVolunteersRouter,
   eventVolunteersRouter,
@@ -70,6 +71,7 @@ admin.use("/payments", adminDocumentsRouter);
 admin.use("/payments", adminPaymentsRouter);
 admin.use("/contact", adminContactRouter);
 admin.use("/donations", adminDonationsRouter);
+admin.use("/gallery", adminGalleryRouter);
 admin.use("/settings", adminSettingsRouter);
 admin.use("/team-profiles", adminTeamProfilesRouter);
 admin.use("/events/:eventId/volunteers", adminEventVolunteersRouter);
@@ -107,6 +109,7 @@ router.use("/auth/google", googleRouter);
 router.use("/auth", authRoutes);
 router.use("/contact", contactRouter);
 router.use("/donations", donationsRouter);
+router.use("/gallery", galleryRouter);
 router.use("/events/:eventId/volunteers", eventVolunteersRouter);
 router.use("/me/mobile", mobileRouter);
 router.use("/me/volunteer", volunteerMeRouter);

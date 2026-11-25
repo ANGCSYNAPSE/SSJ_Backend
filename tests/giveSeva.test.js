@@ -50,6 +50,20 @@ describe("Give Seva donations", () => {
     assert.equal(row.video_number, "+91 98765 43210");
   });
 
+  it("shows an own-wish seva's wish in the public feed, but never a private one", async () => {
+    const named = await api("/donations/create-order", { body: base({ sevaType: "your-choice", cause: "Seva of Own Wish", message: "Seva wish: blankets for the roadside this winter\nJai Shree Shyam" }) });
+    const hidden = await api("/donations/create-order", { body: base({ sevaType: "your-choice", cause: "Seva of Own Wish", anonymous: true, message: "Seva wish: a private wish" }) });
+    for (const res of [named, hidden]) {
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      await sql(`UPDATE donations SET status = 'paid' WHERE razorpay_order_id = $1`, [res.body.data.orderId]);
+    }
+    const feed = (await api("/donations/feed?sevaType=your-choice")).body.data;
+    assert.ok(feed.every((item) => item.sevaType === "your-choice"), "only the own-wish seva");
+    const wishes = feed.map((item) => item.wish).filter(Boolean);
+    assert.ok(wishes.includes("blankets for the roadside this winter"), "the wish is shown");
+    assert.ok(!wishes.some((w) => w.includes("private wish")), "a private offering's wish is never shown");
+  });
+
   it("still takes a plain donation with none of those details", async () => {
     const res = await api("/donations/create-order", { body: base() });
     assert.equal(res.status, 201, JSON.stringify(res.body));

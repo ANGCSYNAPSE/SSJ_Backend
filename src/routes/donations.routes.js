@@ -66,7 +66,9 @@ import { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature } f
  * /api/v1/donations/feed:
  *   get:
  *     tags: [Donations]
- *     summary: Public live feed of recent paid donations (latest 20)
+ *     summary: Public live feed of recent paid donations (latest 20). For "Seva of Own Wish" (sevaType your-choice) each item also carries the wish the donor wrote, unless they chose to keep the offering private.
+ *     parameters:
+ *       - { in: query, name: sevaType, schema: { type: string }, description: "Only the offerings of this seva" }
  *     responses:
  *       200: { description: Donation feed }
  * /api/v1/admin/donations:
@@ -190,15 +192,27 @@ donationsRouter.post(
   }),
 );
 
+/**
+ * What a donor wrote for a "Seva of Own Wish" (the dialog saves it as the first line of the message, after "Seva wish:"). It is
+ * shown publicly only when the donor did not choose to keep the offering private.
+ */
+const wishOf = (d) => {
+  if (d.sevaType !== "your-choice" || d.anonymous) return null;
+  const found = /^Seva wish:\s*(.+)/.exec(d.message ?? "");
+  return found ? found[1].trim().slice(0, 200) : null;
+};
+
 donationsRouter.get(
   "/feed",
-  asyncHandler(async (_req, res) => {
-    const paid = await DonationModel.list("status = 'paid'");
+  asyncHandler(async (req, res) => {
+    const only = typeof req.query.sevaType === "string" ? req.query.sevaType : null;
+    const paid = (await DonationModel.list("status = 'paid'")).filter((d) => !only || d.sevaType === only);
     const feed = paid.slice(0, 20).map((d) => ({
       name: d.anonymous ? "Anonymous" : d.donorName,
       amount: d.amountInRupees,
       cause: d.cause,
       sevaType: d.sevaType ?? null,
+      wish: wishOf(d),
       time: d.createdAt,
     }));
     sendSuccess(res, { data: feed });
