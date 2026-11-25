@@ -34,6 +34,13 @@ const reviewSchema = z.object({
  *     responses:
  *       200: { description: "Approved items: id, folder, kind, url, caption" }
  *       400: { description: Unknown gallery }
+ * /api/v1/gallery/mine:
+ *   get:
+ *     tags: [Gallery]
+ *     summary: What the signed-in member has shared, and its status
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: The member's own items, newest first }
  *   post:
  *     tags: [Gallery]
  *     summary: A member shares a photograph or video (it waits for an admin's approval)
@@ -72,6 +79,23 @@ galleryRouter.get(
         ORDER BY created_at DESC
         LIMIT 500`,
       [gallery],
+    );
+    sendSuccess(res, { data: rows });
+  }),
+);
+
+/** What the signed-in member has shared, with where each one stands (waiting, shown, or not shown). */
+galleryRouter.get(
+  "/mine",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const rows = await sql(
+      `SELECT id, gallery, folder, kind, url, caption, status, created_at AS "createdAt"
+         FROM gallery_items
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT 50`,
+      [req.user.id],
     );
     sendSuccess(res, { data: rows });
   }),

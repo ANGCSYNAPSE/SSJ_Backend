@@ -43,6 +43,10 @@ describe("galleries: nothing is shown until an admin approves it", () => {
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
     assert.ok((await publicUrls()).includes(url), "public once approved");
 
+    const mine = (await api("/gallery/mine", { token: member })).body.data;
+    assert.ok(mine.some((i) => i.id === made.body.data.id && i.status === "approved"), "the member sees their own item and its status");
+    assert.equal((await api("/gallery/mine")).status, 401, "mine needs a sign-in");
+
     await api(`/admin/gallery/${made.body.data.id}`, { token: admin, method: "PATCH", body: { status: "rejected", note: "Not clear" } });
     assert.ok(!(await publicUrls()).includes(url), "hidden again once rejected");
   });
